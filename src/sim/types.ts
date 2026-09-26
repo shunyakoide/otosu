@@ -17,6 +17,8 @@ export type Segment = {
   note: number;
   addedStep: number;
   lastEventStep: number;
+  /** 回転の向き（線の属性。id から導かない — B6） */
+  dir: 1 | -1;
 };
 
 export type Ball = {
@@ -44,12 +46,27 @@ export type Emitter = {
   nextK: number;
 };
 
+export type DriftMode = 'off' | 'drift' | 'phrase';
+
+/** 保存・読み込みできる配置（座標は整数 px） */
+export type SceneData = {
+  v: 1;
+  bpm: number;
+  pattern: number[];
+  rotate: boolean;
+  rotationSpeed: number;
+  drift: { mode: DriftMode; amp: number };
+  segs: [ax: number, ay: number, bx: number, by: number, dir: 1 | -1][];
+};
+
 export type Command =
-  | { kind: 'addSegment'; ax: number; ay: number; bx: number; by: number }
+  | { kind: 'addSegment'; ax: number; ay: number; bx: number; by: number; dir?: 1 | -1 }
   | { kind: 'removeSegment'; id: number }
   | { kind: 'clearSegments' }
   | { kind: 'setRotation'; on: boolean; speed: number }
-  | { kind: 'setTempo'; bpm: number; pattern: readonly number[] };
+  | { kind: 'setTempo'; bpm: number; pattern: readonly number[] }
+  | { kind: 'setDrift'; mode: DriftMode; amp: number }
+  | { kind: 'loadScene'; scene: SceneData };
 
 export type HitEvent = {
   kind: 'hit';
@@ -60,12 +77,19 @@ export type HitEvent = {
   y: number;
   normalSpeed: number;
   velocity: number;
+  /** 線に固定された音程スロット 0..15（色もこれで決まる） */
   note: number;
+  /** 実際に鳴らす音高。ハーモニーの区間で動く */
+  midi: number;
+  /** ハーモニー進行の区間番号 */
+  section: number;
 };
 
 export type SimEvent =
   | HitEvent
-  | { kind: 'emit'; step: number; emitterId: number; ballId: number }
+  | { kind: 'emit'; step: number; emitterId: number; ballId: number; x: number; y: number }
+  | { kind: 'emitters'; step: number; emitters: { id: number; x: number; y: number }[] }
+  | { kind: 'segmentPose'; step: number; segmentId: number; theta0: number; rotStartStep: number; omega: number }
   | { kind: 'segmentAdded'; step: number; segment: Readonly<Segment> }
   | { kind: 'segmentRemoved'; step: number; segmentId: number };
 

@@ -34,7 +34,16 @@ export const STALL_SPEED = 5;
 export const STALL_STEPS = HZ;
 
 /** 描画用の位置履歴（ステップ数） */
-export const HISTORY = 64;
+export const HISTORY = 96;
+
+/** ハーモニーの1区間の長さ（小節、4/4） */
+export const SECTION_BARS = 8;
+
+/** 放出口の揺らぎ（P1）。位置は放出番号 k の関数 */
+export const DRIFT_PERIOD = 64; // drift: 三角波の周期（放出回数）
+export const PHRASE_LEN = 16; // phrase: 同じ位置に留まる放出回数
+export const DRIFT_AMP_MAX = 80;
+export const DRIFT_AMP_DEFAULT = 24;
 
 /** 衝突速度 → 0..1（音量と発光強度の共通値） */
 export function impactVelocity(vn: number): number {

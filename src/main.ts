@@ -4,7 +4,8 @@ import { Input } from './input/input';
 import { Renderer } from './render/render';
 import { HISTORY, HZ } from './sim/constants';
 import { Sim } from './sim/sim';
-import type { Command, SimEvent } from './sim/types';
+import type { Command, DriftMode, SceneData, SimEvent } from './sim/types';
+import { decodeScene, encodeScene, SCENE_HASH_KEY, SCENE_STORAGE_KEY, sceneFromSim } from './scene/scene';
 
 // 時計は AudioContext の1本（decisions.md D3, D8）。
 // sim は LOOKAHEAD ぶん先行し、音は t0 + step/HZ に予約、描画は「今聴こえている時刻」の世界を表示する。
@@ -27,9 +28,13 @@ const params = {
   volume: -3,
   rotate: false,
   rotationSpeed: 0.3,
+  drift: 'drift' as DriftMode,
+  driftAmp: 24,
+  stereoWidth: 0.7,
+  trail: 'geometry' as 'geometry' | 'afterimage',
   colorMode: 'pitch' as 'pitch' | 'mono',
   bloomStrength: 0.9,
-  afterimage: 0.88,
+  afterimage: 0.8,
   idleLine: 0.3,
   visualOffsetMs: 0,
   pixelRatio: 1,
@@ -43,14 +48,52 @@ const DEMO: Command[] = [
   { kind: 'addSegment', ax: 820, ay: 950, bx: 980, by: 900 },
 ];
 
+// ---- 保存された配置（URL ハッシュ → localStorage の順） ----
+function loadStoredScene(): SceneData | null {
+  const m = location.hash.match(new RegExp(`[#&]${SCENE_HASH_KEY}=([^&]+)`));
+  if (m) {
+    const scene = decodeScene(m[1]!);
+    if (scene) return scene;
+  }
+  try {
+    const code = localStorage.getItem(SCENE_STORAGE_KEY);
+    return code ? decodeScene(code) : null;
+  } catch {
+    return null;
+  }
+}
+
+function applySceneParams(scene: SceneData): void {
+  const label = scene.pattern.join(' : ');
+  if (!PATTERNS[label]) PATTERNS[label] = scene.pattern;
+  params.bpm = scene.bpm;
+  params.pattern = label;
+  params.rotate = scene.rotate;
+  params.rotationSpeed = scene.rotationSpeed;
+  params.drift = scene.drift.mode;
+  params.driftAmp = scene.drift.amp;
+}
+
 Audio.setupContext();
 const audio = new Audio();
-const sim = new Sim({ bpm: params.bpm, pattern: PATTERNS[params.pattern]! });
-for (const c of DEMO) sim.enqueue(c);
+const stored = loadStoredScene();
+if (stored) applySceneParams(stored);
+const sim = new Sim({
+  bpm: params.bpm,
+  pattern: PATTERNS[params.pattern]!,
+  drift: { mode: params.drift, amp: params.driftAmp },
+});
+if (stored) sim.enqueue({ kind: 'loadScene', scene: stored });
+else for (const c of DEMO) sim.enqueue(c);
 
 const app = document.getElementById('app')!;
 const renderer = new Renderer(app, params);
-const input = new Input(renderer.canvas, sim, (x, y) => renderer.toWorld(x, y));
+const input = new Input(
+  renderer.canvas,
+  sim,
+  (x, y) => renderer.toWorld(x, y),
+  (x, y) => renderer.pickSegment(x, y),
+);
 
 // ---- GUI ----
 const gui = new GUI({ title: 'otosu' });
@@ -59,14 +102,19 @@ const setTempo = () => {
   if (started) audio.setBpm(params.bpm);
 };
 const setRotation = () => sim.enqueue({ kind: 'setRotation', on: params.rotate, speed: params.rotationSpeed });
+const setDrift = () => sim.enqueue({ kind: 'setDrift', mode: params.drift, amp: params.driftAmp });
 const music = gui.addFolder('Music');
 music.add(params, 'bpm', 60, 140, 1).onFinishChange(setTempo);
 music.add(params, 'pattern', Object.keys(PATTERNS)).onChange(setTempo);
 music.add(params, 'volume', -30, 0, 1).onChange((v: number) => started && audio.setVolume(v));
+music.add(params, 'stereoWidth', 0, 1, 0.05).onChange((v: number) => started && audio.setStereoWidth(v));
 const motion = gui.addFolder('Motion');
 motion.add(params, 'rotate').onChange(setRotation);
 motion.add(params, 'rotationSpeed', 0.05, 1, 0.01).onFinishChange(setRotation);
+motion.add(params, 'drift', ['off', 'drift', 'phrase']).onChange(setDrift);
+motion.add(params, 'driftAmp', 0, 80, 1).onFinishChange(setDrift);
 const visual = gui.addFolder('Visual');
+visual.add(params, 'trail', ['geometry', 'afterimage']);
 visual.add(params, 'colorMode', ['pitch', 'mono']);
 visual.add(params, 'bloomStrength', 0, 2, 0.01);
 visual.add(params, 'afterimage', 0.7, 0.97, 0.005);
@@ -75,6 +123,7 @@ visual.add(params, 'visualOffsetMs', -150, 40, 1);
 visual.add(params, 'pixelRatio', [1, 1.5, 2]).onChange((r: number) => renderer.setPixelRatio(r));
 gui.add({ clear: () => sim.enqueue({ kind: 'clearSegments' }) }, 'clear').name('clear lines (C)');
 gui.add({ demo: () => DEMO.forEach((c) => sim.enqueue(c)) }, 'demo').name('add demo lines');
+gui.add({ copy: () => void copySceneUrl() }, 'copy').name('copy scene URL (S)');
 gui.close();
 
 // ---- キー操作・カーソル ----
@@ -87,6 +136,8 @@ addEventListener('keydown', (e) => {
     document.getElementById('hint')!.classList.toggle('hidden');
   } else if (e.key === 'c' || e.key === 'C') {
     sim.enqueue({ kind: 'clearSegments' });
+  } else if (e.key === 's' || e.key === 'S') {
+    void copySceneUrl();
   }
 });
 let cursorTimer = 0;
@@ -105,6 +156,7 @@ overlay.addEventListener('pointerdown', async () => {
   overlay.textContent = '…';
   await audio.start(params.bpm);
   audio.setVolume(params.volume);
+  audio.setStereoWidth(params.stereoWidth);
   const ctx = audio.raw;
   console.info(`[otosu] baseLatency=${ctx.baseLatency} outputLatency=${ctx.outputLatency}`);
   t0 = ctx.currentTime + 0.1;
@@ -161,3 +213,33 @@ function frame(now: number): void {
 requestAnimationFrame(frame);
 
 if (import.meta.env.DEV) Object.assign(window, { otosu: { sim, audio, params } });
+
+// ---- 配置の自動保存と URL 共有 ----
+function currentSceneCode(): string {
+  return encodeScene(sceneFromSim(sim));
+}
+
+async function copySceneUrl(): Promise<void> {
+  const url = `${location.origin}${location.pathname}#${SCENE_HASH_KEY}=${currentSceneCode()}`;
+  history.replaceState(null, '', url);
+  try {
+    await navigator.clipboard.writeText(url);
+    console.info('[otosu] scene URL copied');
+  } catch {
+    console.info(`[otosu] scene URL: ${url}`);
+  }
+}
+
+let lastSaved = '';
+setInterval(() => {
+  // 開始前はコマンドが sim に適用されていないので保存しない（空の配置で上書きしてしまう）
+  if (!started) return;
+  const code = currentSceneCode();
+  if (code === lastSaved) return;
+  lastSaved = code;
+  try {
+    localStorage.setItem(SCENE_STORAGE_KEY, code);
+  } catch {
+    // 保存できない環境（プライベートモード等）では何もしない
+  }
+}, 2000);

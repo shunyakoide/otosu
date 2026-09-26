@@ -35,3 +35,34 @@ export function lengthToNote(lengthPx: number): Note {
 export function midiToFreq(midi: number): number {
   return 440 * Math.pow(2, (midi - 69) / 12);
 }
+
+// ---- ハーモニーの移ろい（step2-audio.md 案1 / D9） ----
+// 線に固定するのはスロット（note 0..15）。実際の音高は衝突ステップの区間で決まる。
+
+/** C 基準の音高クラス（昇順5つ）。隣り合うスケールは4音を共有する */
+export const SCALES = {
+  C: [0, 2, 4, 7, 9],
+  F: [0, 2, 5, 7, 9],
+  G: [2, 4, 7, 9, 11],
+} as const;
+
+/** 進行 I–IV–I–V */
+export const PROG: readonly (readonly number[])[] = [SCALES.C, SCALES.F, SCALES.C, SCALES.G];
+
+/** 1区間のステップ数 */
+export function sectionSteps(bpm: number, bars: number, hz: number): number {
+  return Math.max(1, Math.round((bars * 4 * hz * 60) / bpm));
+}
+
+/** 区間番号（0..PROG.length-1）。anchor 以前のステップにも対応する */
+export function sectionAt(step: number, anchor: number, base: number, len: number): number {
+  const n = PROG.length;
+  const k = base + Math.floor((step - anchor) / len);
+  return ((k % n) + n) % n;
+}
+
+/** スロットと区間 → MIDI ノート番号 */
+export function midiAt(slot: number, section: number): number {
+  const { degree, octave } = noteFromIndex(slot);
+  return ROOT_MIDI + 12 * octave + PROG[section % PROG.length]![degree]!;
+}
