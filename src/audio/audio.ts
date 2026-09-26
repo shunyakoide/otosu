@@ -35,13 +35,25 @@ export class Audio {
   private delay!: Tone.PingPongDelay;
   private stereoWidth = 0.7;
 
-  /** 他のノードより先に Context を作る必要があるので、生成とは分けて呼ぶ */
+  /**
+   * ネイティブの AudioContext を自前で作って Tone に渡す。
+   * Tone が自動で作る Context は互換ラッパーで getOutputTimestamp を持たないため（描画・MIDI の時刻合わせに必要）。
+   * 他のノードより先に呼ぶ必要があるので、生成とは分けている。
+   */
+  private static native: AudioContext;
+
   static setupContext(): void {
-    Tone.setContext(new Tone.Context({ latencyHint: 'interactive', lookAhead: 0 }));
+    Audio.native = new AudioContext({ latencyHint: 'interactive' });
+    const ctx = new Tone.Context({
+      // Tone の型は互換ラッパーの AudioContext を要求するが、実行時はネイティブも受け付ける
+      context: Audio.native as never,
+      lookAhead: 0,
+    });
+    Tone.setContext(ctx);
   }
 
   get raw(): AudioContext {
-    return Tone.getContext().rawContext as AudioContext;
+    return Audio.native;
   }
 
   async start(bpm: number): Promise<void> {

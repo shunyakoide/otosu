@@ -318,7 +318,10 @@ export class Sim {
 
   private emit(s: number): void {
     for (const em of this.emitters) {
-      if (em.anchorStep + em.nextK * em.periodSteps !== s) continue;
+      // k 回目の放出は anchor + round(k·beats·7200/BPM)。周期を整数に丸めて足し合わせると、
+      // 7200 を割り切れない BPM で誤差がたまり、録音が DAW のグリッドからずれるため（D10）
+      const at = em.anchorStep + Math.round((em.nextK * em.beats * HZ * 60) / this.bpm);
+      if (at !== s) continue;
       em.x = this.baseXs[em.id]! + driftOffset(this.driftMode, this.driftAmp, em.id, em.nextK);
       em.nextK++;
       const ball: Ball = {

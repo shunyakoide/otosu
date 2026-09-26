@@ -1,6 +1,7 @@
 import GUI from 'lil-gui';
 import { Audio } from './audio/audio';
 import { Input } from './input/input';
+import { Midi } from './midi/midi';
 import { Renderer } from './render/render';
 import { HISTORY, HZ } from './sim/constants';
 import { Sim } from './sim/sim';
@@ -38,6 +39,11 @@ const params = {
   idleLine: 0.3,
   visualOffsetMs: 0,
   pixelRatio: 1,
+  internalSound: true,
+  midiOutput: '',
+  midiChannel: 1,
+  midiNoteLength: 0.4,
+  midiOffsetMs: 0,
 };
 
 const DEMO: Command[] = [
@@ -98,6 +104,8 @@ const input = new Input(
 // ---- GUI ----
 const gui = new GUI({ title: 'otosu' });
 const setTempo = () => {
+  // 録音中にテンポや周期を変えると小節線が崩れるので、そこまでを保存して止める（D10）
+  if (midi.isRecording) toggleRecording();
   sim.enqueue({ kind: 'setTempo', bpm: params.bpm, pattern: PATTERNS[params.pattern]! });
   if (started) audio.setBpm(params.bpm);
 };
@@ -124,7 +132,64 @@ visual.add(params, 'pixelRatio', [1, 1.5, 2]).onChange((r: number) => renderer.s
 gui.add({ clear: () => sim.enqueue({ kind: 'clearSegments' }) }, 'clear').name('clear lines (C)');
 gui.add({ demo: () => DEMO.forEach((c) => sim.enqueue(c)) }, 'demo').name('add demo lines');
 gui.add({ copy: () => void copySceneUrl() }, 'copy').name('copy scene URL (S)');
+const midiFolder = gui.addFolder('MIDI');
+const midi = new Midi({
+  get channel() { return params.midiChannel; },
+  get noteLength() { return params.midiNoteLength; },
+  get offsetMs() { return params.midiOffsetMs; },
+});
+midiFolder.add(params, 'internalSound').name('internal sound');
+let outputCtrl = midiFolder.add(params, 'midiOutput', { '(none)': '' }).name('output');
+const midiActions = {
+  connect: async () => {
+    try {
+      const outs = await midi.connect();
+      const options: Record<string, string> = { '(none)': '' };
+      for (const o of outs) options[o.name] = o.id;
+      const iac = outs.find((o) => /IAC/i.test(o.name));
+      if (!params.midiOutput && iac) params.midiOutput = iac.id;
+      outputCtrl = outputCtrl.options(options).name('output').onChange((id: string) => midi.select(id || null));
+      midi.select(params.midiOutput || null);
+      connectCtrl.name(outs.length ? `MIDI connected (${outs.length})` : 'no MIDI outputs found');
+    } catch (err) {
+      console.warn('[otosu] MIDI', err);
+      connectCtrl.name(Midi.supported ? 'MIDI permission denied' : 'Web MIDI unsupported (use Chrome)');
+    }
+  },
+  record: () => toggleRecording(),
+};
+const connectCtrl = midiFolder.add(midiActions, 'connect').name('connect MIDI');
+midiFolder.add(params, 'midiChannel', 1, 16, 1).name('channel').onChange(() => midi.allNotesOff());
+midiFolder.add(params, 'midiNoteLength', 0.05, 2, 0.05).name('note length (s)');
+midiFolder.add(params, 'midiOffsetMs', -100, 200, 1).name('offset (ms)');
+const recordCtrl = midiFolder.add(midiActions, 'record').name('● record .mid (R)');
 gui.close();
+
+function toggleRecording(): void {
+  if (!started) return;
+  if (!midi.isRecording) {
+    // 次の拍の頭から記録する（DAW で小節線が合うように）
+    const em = sim.emitters[0];
+    const spb = (HZ * 60) / sim.bpm;
+    const anchor = em ? em.anchorStep : 0;
+    const start = anchor + Math.ceil((sim.step - anchor) / spb) * spb;
+    midi.startRecording(start, sim.bpm);
+    recordCtrl.name('■ stop & save .mid (R)');
+    return;
+  }
+  const data = midi.stopRecording();
+  recordCtrl.name('● record .mid (R)');
+  if (!data) return;
+  const d = new Date();
+  const pad = (n: number) => String(n).padStart(2, '0');
+  const name = `otosu-${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}.mid`;
+  const url = URL.createObjectURL(new Blob([data as BlobPart], { type: 'audio/midi' }));
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = name;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
 
 // ---- キー操作・カーソル ----
 addEventListener('keydown', (e) => {
@@ -136,6 +201,8 @@ addEventListener('keydown', (e) => {
     document.getElementById('hint')!.classList.toggle('hidden');
   } else if (e.key === 'c' || e.key === 'C') {
     sim.enqueue({ kind: 'clearSegments' });
+  } else if (e.key === 'r' || e.key === 'R') {
+    toggleRecording();
   } else if (e.key === 's' || e.key === 'S') {
     void copySceneUrl();
   }
@@ -163,6 +230,16 @@ overlay.addEventListener('pointerdown', async () => {
   started = true;
   overlay.remove();
 });
+
+/** AudioContext 時刻 → その音がスピーカーから聞こえる performance.now 時刻（出力遅延込み） */
+function toPerf(audioTime: number): number {
+  const ctx = audio.raw;
+  const ts = ctx.getOutputTimestamp?.();
+  if (ts && ts.contextTime && ts.performanceTime) {
+    return ts.performanceTime + (audioTime - ts.contextTime) * 1000;
+  }
+  return performance.now() + (audioTime - ctx.currentTime + (ctx.outputLatency || 0)) * 1000;
+}
 
 /** 今スピーカーから出ている音のコンテキスト時刻（滑らかにしたもの） */
 function audibleTime(ctx: AudioContext): number {
@@ -199,12 +276,15 @@ function frame(now: number): void {
   for (const e of sim.drainEvents()) {
     if (e.kind === 'hit') {
       const time = t0 + e.step / HZ;
+      midi.record(e); // 録音は step 基準なので、遅れて捨てる衝突も入れる
       if (time < ct - LATE_DROP) continue; // 音も光も捨てる
-      audio.play(e, Math.max(time, ct));
+      if (params.internalSound) audio.play(e, Math.max(time, ct));
+      midi.play(e, Math.max(time, ct), toPerf);
     }
     kept.push(e);
   }
   renderer.push(kept);
+  midi.update();
 
   let rs = (audibleTime(ctx) - t0) * HZ + (params.visualOffsetMs / 1000) * HZ;
   rs = Math.min(sim.step - 1, Math.max(sim.step - HISTORY + 2, rs));
@@ -212,7 +292,7 @@ function frame(now: number): void {
 }
 requestAnimationFrame(frame);
 
-if (import.meta.env.DEV) Object.assign(window, { otosu: { sim, audio, params } });
+if (import.meta.env.DEV) Object.assign(window, { otosu: { sim, audio, params, midi } });
 
 // ---- 配置の自動保存と URL 共有 ----
 function currentSceneCode(): string {
@@ -243,3 +323,9 @@ setInterval(() => {
     // 保存できない環境（プライベートモード等）では何もしない
   }
 }, 2000);
+
+// タブを隠すと rAF が止まり note off が送られないので、先に全部止める
+addEventListener('visibilitychange', () => {
+  if (document.hidden) midi.allNotesOff();
+});
+addEventListener('pagehide', () => midi.allNotesOff());

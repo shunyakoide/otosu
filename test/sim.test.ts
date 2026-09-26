@@ -318,3 +318,15 @@ describe('rayCapsule', () => {
     expect(out.ny).toBeCloseTo(-1);
   });
 });
+
+describe('emission timing (D10)', () => {
+  it('does not accumulate rounding error at BPMs that do not divide 7200', () => {
+    const sim = new Sim({ bpm: 97, pattern: [2], drift: { mode: 'off', amp: 0 } });
+    const emits: number[] = [];
+    for (let i = 0; i < 120 * 300; i++) {
+      sim.advance();
+      for (const e of sim.drainEvents()) if (e.kind === 'emit') emits.push(e.step);
+    }
+    emits.forEach((step, k) => expect(Math.abs(step - (k * 2 * 7200) / 97)).toBeLessThanOrEqual(0.5));
+  });
+});
