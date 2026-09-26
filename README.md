@@ -12,7 +12,24 @@ npm install
 npm run dev
 ```
 
+```bash
+npm test   # 物理の決定論性・すり抜けなしのテスト
+```
+
+## 操作
+
+| 操作 | 内容 |
+|---|---|
+| ドラッグ | 線を引く（長いほど低い音） |
+| 右クリック | 近くの線を消す |
+| C | 線を全部消す |
+| F | フルスクリーン |
+| H | UI とヒントを隠す（投影用） |
+
+右上の `otosu` パネルで BPM、放出口の周期比、回転、発光、残像、音と光のずれ（`visualOffsetMs`）を調整できます。
+
 ## ドキュメント
 
 - [docs/concept.md](docs/concept.md) — コンセプトと決定事項
-- [docs/design/](docs/design/) — 担当ごとの設計案
+- [docs/design/decisions.md](docs/design/decisions.md) — チームの設計案を統合した裁定（ここが最優先）
+- [docs/design/](docs/design/) — 担当ごとの設計案（音・映像・物理とアーキテクチャ）

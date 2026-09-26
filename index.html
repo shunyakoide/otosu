@@ -6,10 +6,26 @@
     <title>otosu</title>
     <style>
       html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
+      body { font-family: ui-sans-serif, system-ui, sans-serif; color: #e8ecf2; }
+      body.idle, body.idle canvas { cursor: none; }
+      canvas { display: block; cursor: crosshair; touch-action: none; }
+      #overlay {
+        position: fixed; inset: 0; display: grid; place-items: center;
+        background: #000; cursor: pointer; letter-spacing: 0.3em; font-size: 14px;
+        user-select: none;
+      }
+      #overlay b { display: block; font-size: 40px; font-weight: 300; letter-spacing: 0.4em; margin-bottom: 16px; }
+      #hint {
+        position: fixed; left: 16px; bottom: 12px; font-size: 12px; opacity: 0.35;
+        letter-spacing: 0.08em; pointer-events: none; transition: opacity 0.4s;
+      }
+      #hint.hidden { opacity: 0; }
     </style>
   </head>
   <body>
     <div id="app"></div>
+    <div id="hint">drag: draw · right-click: erase · C: clear · F: fullscreen · H: hide ui</div>
+    <div id="overlay"><div style="text-align:center"><b>otosu</b>click to start</div></div>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>
