@@ -51,6 +51,7 @@ const DEFAULTS = {
   colorMode: 'pitch' as (typeof COLOR_MODES)[number],
   bloomStrength: 0.9,
   afterimage: 0.8,
+  flowers: true,
   idleLine: 0.3,
   visualOffsetMs: 0,
   pixelRatio: 1 as number,
@@ -209,6 +210,7 @@ const lightPop = new Popover(document.body);
   l.slider(params, 'idleLine', { label: 'lines', min: 0.15, max: 0.45, step: 0.01 });
   l.slider(params, 'afterimage', { label: 'trail', min: 0.7, max: 0.97, step: 0.005, format: (v) => v.toFixed(2) });
   l.choice(params, 'colorMode', 'color', () => COLOR_MODES.map((value) => ({ value, label: value === 'pitch' ? 'by pitch' : 'white' })));
+  l.toggle(params, 'flowers', 'flowers');
 }
 
 type PopName = 'motion' | 'light' | 'scenes';
@@ -527,11 +529,22 @@ function audibleTime(ctx: AudioContext): number {
   return ctx.currentTime - (ctx.outputLatency || 0);
 }
 
+// ?fps: 実機で重さを確かめるための表示（fps と画質の段階。D27）
+const fpsEl = new URLSearchParams(location.search).has('fps') ? document.body.appendChild(document.createElement('div')) : null;
+if (fpsEl) fpsEl.style.cssText = 'position:fixed;right:8px;bottom:8px;font:11px monospace;color:#8f8;pointer-events:none;z-index:9';
+let fpsFrames = 0;
+let fpsT = performance.now();
+
 let lastFrame = performance.now();
 function frame(now: number): void {
   requestAnimationFrame(frame);
   const dt = Math.min(0.1, (now - lastFrame) / 1000);
   lastFrame = now;
+  if (fpsEl && ++fpsFrames && now - fpsT >= 1000) {
+    fpsEl.textContent = `${Math.round((fpsFrames * 1000) / (now - fpsT))} fps · q${renderer.qualityLevel}`;
+    fpsFrames = 0;
+    fpsT = now;
+  }
 
   if (!started) {
     renderer.render(sim, -1, dt, input.preview);

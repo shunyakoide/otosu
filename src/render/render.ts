@@ -12,7 +12,9 @@ import { closestOnSegment } from '../sim/collide';
 import { BALL_RADIUS, HZ, LINE_WIDTH, MAX_BALLS, MIN_LINE_LEN, WORLD_H, WORLD_W, type Bounds } from '../sim/constants';
 import { lengthToNote } from '../sim/music';
 import type { SegKind, ShapeAddedEvent, ShapeForm, SimEvent, Snapshot } from '../sim/types';
+import { FLOWER_HOLD_SEC, Flowers } from './flowers';
 import { GRAY, noteColor, OFF_WHITE, type ColorMode } from './palette';
+import { QualityGovernor, type QualityLevel } from './quality';
 
 // 描画は「renderStep 時点の世界」を表示する（decisions.md D3, D8-5）。
 // sim は LOOKAHEAD ぶん先行しているので、イベントは renderStep に達してから反映する。
@@ -27,6 +29,8 @@ export type RenderParams = {
   idleLine: number;
   /** 'geometry' = 履歴から尾を描く（ステップ2）/ 'afterimage' = ステップ1の見た目（尾なし・damp 0.88） */
   trail?: TrailMode;
+  /** 衝突で花が咲く（D25） */
+  flowers?: boolean;
 };
 
 /** 描画中の図形とホバー（座標は論理ワールド）。input.ts が書き、render が読む */
@@ -45,6 +49,15 @@ export type Preview = {
 export type SnapshotSource = { snapshot(step: number): Snapshot | undefined };
 
 export const PICK_RADIUS = 12;
+
+// スマホ・タブレット（D26）: 画面が小さいとワールド全体が遠く小さく見えるので、寄って表示し、線やボールを太く描く
+/** 寄ったあとの縮尺（CSS px / ワールド px）の目安と、寄る倍率の上限 */
+const TOUCH_SCALE = 0.5;
+const TOUCH_ZOOM_MAX = 2.2;
+/** 線・ボール・蔦を太く描く倍率（見た目だけ。当たり判定は変えない） */
+const TOUCH_THICK = 1.6;
+/** 指で図形を選ぶ半径（CSS px） */
+const TOUCH_PICK_PX = 22;
 
 const MAX_VERTS = 64;
 const MAX_EDGE_INST = 2048;
@@ -121,6 +134,50 @@ const WOOD_ECHO_SEC = 0.12;
 const WOOD_ECHO_GROW = 0.06;
 const WOOD_RIPPLE_SEC = 0.18;
 
+// 蔦と花（D25）: 衝突した点から図形に沿って蔦が伸び、通ったところに花が順に咲く
+const MAX_VINES = 96;
+const MAX_VINE_QUADS = 12288;
+/** 伸びる速さ（px/s）と、片側に伸びる長さ = VINE_REACH + VINE_REACH_V · 衝突の強さ */
+const VINE_SPEED = 220;
+const VINE_REACH = 90;
+const VINE_REACH_V = 320;
+/** 同じ図形で次の蔦を伸ばすまでの最短間隔（秒） */
+const VINE_GAP_SEC = 0.4;
+/** 図形の線をまたいで巻きつく揺れ（px）と波長（px） */
+const VINE_AMP = 5;
+const VINE_WAVE = 70;
+/** 蔦を描く刻み（px）と太さ（px） */
+const VINE_STEP = 5;
+const VINE_WIDTH = 1.4;
+const VINE_GAIN = 0.32;
+/** 花の間隔（px）: VINE_FLOWER_GAP × (0.8..1.3) */
+const VINE_FLOWER_GAP = 70;
+/** 花の半径（px）と明るさ: 基準 + 衝突の強さに比例 */
+const VINE_FLOWER_R = 46;
+const VINE_FLOWER_R_V = 30;
+const VINE_FLOWER_GAIN = 0.2;
+const VINE_FLOWER_GAIN_V = 0.12;
+/** 当たった所に咲く花の大きさ（倍） */
+const VINE_FLOWER_HIT_SCALE = 1.6;
+/** 茎の長さ（花の大きさに対して）。花は蔦からこの分だけ外へ離れて咲き、付け根の2枚の葉がその間をつなぐ（茎の線は描かない） */
+const VINE_STEM = 0.7;
+/** 葉: 間隔（px）、長さ（花の大きさに対して）、明るさ、伸びる向きの蔦からの傾き（ラジアン） */
+const LEAF_GAP = 34;
+const LEAF_LEN = 0.95;
+const LEAF_GAIN = 0.32;
+const LEAF_ANGLE = 0.75;
+const VINE_COLOR = new Color(0x6fcf7a);
+
+/** at = 咲き始めるステップ（落ち始めたら図形に付いて動かすのをやめる） */
+type VineFlower = { handle: number; arc: number; off: number; at: number };
+
+type Vine = {
+  group: number; step: number; phi0: number; arc0: number; reach: number; seed: number; note: number;
+  /** 蔦が消え始めるまでの秒数 */
+  life: number;
+  flowers: VineFlower[];
+};
+
 type BallLook = { note: number; step: number; v: number; chain: number };
 /** 波紋: 半径 r0 から grow だけ dur 秒で広がる。明るさ gain·(1−p)² */
 type Ripple = { x: number; y: number; step: number; note: number; r0: number; grow: number; dur: number; gain: number };
@@ -177,11 +234,15 @@ function instanced(geo: BufferGeometry, count: number, order: number, mat = addi
   return mesh;
 }
 
+/** 描く数を決め、書いた先頭 n 個だけを GPU に送る（上限まで丸ごと送ると毎フレーム MB 単位になる） */
 function commit(mesh: InstancedMesh, n: number, extra: InstancedBufferAttribute[] = []): void {
   mesh.count = n;
-  mesh.instanceMatrix.needsUpdate = true;
-  mesh.instanceColor!.needsUpdate = true;
-  for (const a of extra) a.needsUpdate = true;
+  if (n === 0) return;
+  for (const a of [mesh.instanceMatrix, mesh.instanceColor!, ...extra]) {
+    a.clearUpdateRanges();
+    a.addUpdateRange(0, n * a.itemSize);
+    a.needsUpdate = true;
+  }
 }
 
 /**
@@ -266,6 +327,10 @@ export class Renderer {
   private readonly ripples = instanced(new RingGeometry(0.93, 1, 48), MAX_RIPPLES, 1);
   private readonly emitterMesh = instanced(new RingGeometry(0.6, 1, 32), MAX_EMITTERS, 1);
   private readonly glints = instanced(new CircleGeometry(1, 8), MAX_GLINTS, 3);
+  private readonly flowers = new Flowers(1);
+  private readonly vineQuads = instanced(new PlaneGeometry(1, 1), MAX_VINE_QUADS, 1);
+  private readonly vines: Vine[] = [];
+  private readonly vineAt = new Map<number, number>();
 
   // きらめき（triangle）のリングバッファ。gStep = Infinity は空き
   private readonly gGroup = new Int32Array(MAX_GLINTS);
@@ -313,16 +378,22 @@ export class Renderer {
   private readonly tint = new Color();
   private readonly near = { dist: 0, nx: 0, ny: 0 };
   private scale = 1;
+  /** 線・ボールを太く描く倍率と、図形を選ぶ半径（ワールド px） */
+  private thick = 1;
+  private pickR = PICK_RADIUS;
   private offsetX = 0;
   private offsetY = 0;
   private view: Bounds = { minX: 0, maxX: WORLD_W, maxY: WORLD_H };
 
   private readonly params: RenderParams;
+  /** 設定の解像度（キャンバス）と、重いときに下げる後処理の画質（D27） */
+  private pixelRatio = 1;
+  private readonly governor = new QualityGovernor();
 
   constructor(parent: HTMLElement, params: RenderParams) {
     this.params = params;
     this.renderer = new WebGLRenderer({ antialias: false, powerPreference: 'high-performance', alpha: false });
-    this.renderer.setPixelRatio(Math.min(devicePixelRatio, 1));
+    this.renderer.setPixelRatio(this.pixelRatio);
     this.renderer.setClearColor(0x000000, 1);
     this.renderer.toneMapping = NeutralToneMapping;
     this.canvas = this.renderer.domElement;
@@ -342,7 +413,7 @@ export class Renderer {
     this.composer.addPass(this.bloom);
     this.composer.addPass(new OutputPass());
 
-    this.scene.add(this.ripples, this.emitterMesh, this.trails, this.edges, this.caps, this.glints, this.balls);
+    this.scene.add(this.vineQuads, this.flowers.mesh, this.ripples, this.emitterMesh, this.trails, this.edges, this.caps, this.glints, this.balls);
     this.resize();
     addEventListener('resize', () => this.resize());
   }
@@ -355,8 +426,26 @@ export class Renderer {
   }
 
   setPixelRatio(r: number): void {
+    if (r === this.pixelRatio) return;
+    this.pixelRatio = r;
     this.renderer.setPixelRatio(r);
     this.resize();
+    // 後処理も同じ解像度で描く（EffectComposer は作ったときの値を持ち続ける）。画質は測り直す
+    this.applyQuality(this.governor.reset());
+  }
+
+  /** 今の画質の段階（0 が最高） */
+  get qualityLevel(): number {
+    return this.governor.level;
+  }
+
+  private applyQuality(q: QualityLevel): void {
+    for (const t of [this.composer.renderTarget1, this.composer.renderTarget2]) {
+      if (t.samples === q.samples) continue;
+      t.samples = q.samples;
+      t.dispose(); // 次に使うときに作り直される
+    }
+    this.composer.setPixelRatio(this.pixelRatio * q.scale);
   }
 
   /** 画面座標 → 論理ワールド座標 */
@@ -377,7 +466,7 @@ export class Renderer {
    * 表示中の図形のうち (x, y) に最も近いものの group（なければ -1）。
    * 辺から PICK_RADIUS 以内、または閉じた図形の内側。姿勢は直近に描画した renderStep のもの（B3）。
    */
-  pickShape(x: number, y: number, radius = PICK_RADIUS): number {
+  pickShape(x: number, y: number, radius = this.pickR): number {
     let bestId = -1;
     let best = radius;
     for (const s of this.shapes.values()) {
@@ -413,8 +502,13 @@ export class Renderer {
     const h = innerHeight;
     // 上端はツールバーの帯としてあけ、ワールドはその下から始める（D24）
     const band = this.topBand;
-    const s = Math.min(w / WORLD_W, (h - band) / WORLD_H);
+    const fit = Math.min(w / WORLD_W, (h - band) / WORLD_H);
+    const touch = matchMedia('(hover: none)').matches;
+    // タッチでは寄る（ワールドの上端・左右中央は保つ。はみ出た分は見えない = ボールも消える範囲）
+    const s = touch ? fit * Math.min(TOUCH_ZOOM_MAX, Math.max(1, TOUCH_SCALE / fit)) : fit;
     this.scale = s;
+    this.thick = touch ? TOUCH_THICK : 1;
+    this.pickR = touch ? Math.max(PICK_RADIUS, TOUCH_PICK_PX / s) : PICK_RADIUS;
     // 16:9 のワールドは左右中央・上寄せ。余りはウィンドウ全体を使う（縦長なら下、横長なら左右。D23）
     this.offsetX = (w - WORLD_W * s) / 2;
     this.offsetY = band;
@@ -607,6 +701,8 @@ export class Renderer {
     this.energyTarget = e.energy;
     this.energyStep = e.step;
 
+    if (s && (this.params.flowers ?? true) && e.segKind !== 'bumper' && e.velocity >= 0.1) this.growVine(s, e.step, e.x, e.y, e.velocity);
+
     // 打点の波紋（circle は重心の輪で代える。square は短く小さく）
     if (e.velocity >= 0.25 && e.form !== 'circle') {
       const wood = e.form === 'square';
@@ -673,6 +769,8 @@ export class Renderer {
           if (!s) break;
           this.shapes.delete(e.group);
           this.hoverAmt.delete(e.group);
+          this.flowers.forget(e.group);
+          this.vineAt.delete(e.group);
           if (e.step !== removedStep) {
             this.stagger(removed);
             removed = [];
@@ -720,11 +818,21 @@ export class Renderer {
     else commit(this.trails, 0);
     this.drawShapes(rs, dt, preview);
     this.drawRipples(rs);
+    if (p.flowers ?? true) {
+      this.drawVines(rs);
+      this.flowers.draw(rs);
+    } else {
+      this.vines.length = 0;
+      commit(this.vineQuads, 0);
+      this.flowers.clear();
+    }
     this.drawGlints(rs);
     this.drawEmitters(rs, dt);
     this.gc(head);
 
     this.composer.render(dt);
+    const q = this.governor.update(dt);
+    if (q) this.applyQuality(q);
   }
 
   // ---- ボールと尾 ----
@@ -763,7 +871,7 @@ export class Renderer {
           }
         }
         const look = this.ballLook.get(id);
-        let scale = BALL_RADIUS;
+        let scale = BALL_RADIUS * this.thick;
         if (look && rs >= look.step) scale *= 1 + 0.35 * Math.exp(-(rs - look.step) / HZ / 0.06);
         d.position.set(x, -y, 0);
         d.rotation.set(0, 0, 0);
@@ -833,7 +941,7 @@ export class Renderer {
           const f = Math.min(1, km / steps);
           // 尾のクアッドはボールや隣と重なって加算されるので、上限を設けてブルームの大きな滲みを防ぐ
           const intensity = Math.min(this.ballIntensity(look, s0 - km) * gain, cap) * Math.pow(1 - f, 1.5);
-          const width = 2 * BALL_RADIUS * (0.8 - 0.6 * f);
+          const width = 2 * BALL_RADIUS * this.thick * (0.8 - 0.6 * f);
           c.copy(base).multiplyScalar(intensity);
           this.putQuad(mesh, n++, px, py, qx, qy, width, c);
           px = qx;
@@ -847,13 +955,18 @@ export class Renderer {
   private putQuad(
     mesh: InstancedMesh, i: number, ax: number, ay: number, bx: number, by: number, width: number, c: Color,
   ): void {
-    const d = this.dummy;
-    d.position.set((ax + bx) / 2, -(ay + by) / 2, 0);
-    d.rotation.set(0, 0, -Math.atan2(by - ay, bx - ax));
-    d.scale.set(Math.hypot(bx - ax, by - ay), width, 1);
-    d.updateMatrix();
-    mesh.setMatrixAt(i, d.matrix);
-    mesh.setColorAt(i, c);
+    // 行列を直接書く（Object3D を通すと四元数を経由して遅い）。x 軸を a→b（y は反転）、y 軸を幅に
+    const dx = bx - ax, dy = by - ay;
+    const len = Math.hypot(dx, dy);
+    const ux = len > 0 ? dx / len : 1, uy = len > 0 ? dy / len : 0;
+    const m = mesh.instanceMatrix.array as Float32Array;
+    const o = i * 16;
+    m[o] = dx; m[o + 1] = -dy; m[o + 2] = 0; m[o + 3] = 0;
+    m[o + 4] = uy * width; m[o + 5] = ux * width; m[o + 6] = 0; m[o + 7] = 0;
+    m[o + 8] = 0; m[o + 9] = 0; m[o + 10] = 1; m[o + 11] = 0;
+    m[o + 12] = (ax + bx) / 2; m[o + 13] = -(ay + by) / 2; m[o + 14] = 0; m[o + 15] = 1;
+    const col = mesh.instanceColor!.array as Float32Array;
+    col[i * 3] = c.r; col[i * 3 + 1] = c.g; col[i * 3 + 2] = c.b;
   }
 
   // ---- 図形 ----
@@ -906,6 +1019,7 @@ export class Renderer {
     v: Float32Array, n: number, closed: boolean, bumper: boolean,
     tint: Color, width: number, base: number, spot: number, sigma: number, sHit: number, vib: number,
   ): void {
+    const k = this.thick;
     const ne = closed ? n : n - 1;
     let perim = 0;
     if (closed) {
@@ -924,17 +1038,16 @@ export class Renderer {
       if (bumper) {
         const nx = len > 0 ? -(by - ay) / len : 0;
         const ny = len > 0 ? (bx - ax) / len : 0;
-        const w = BUMPER_WIDTH + (width - LINE_WIDTH) / 2;
-        this.putEdge(ax - nx * BUMPER_OFFSET, ay - ny * BUMPER_OFFSET, bx - nx * BUMPER_OFFSET, by - ny * BUMPER_OFFSET,
-          w, tint, start, len, sHit, vib, base, spot, sigma, perim);
-        this.putEdge(ax + nx * BUMPER_OFFSET, ay + ny * BUMPER_OFFSET, bx + nx * BUMPER_OFFSET, by + ny * BUMPER_OFFSET,
-          w, tint, start, len, sHit, vib, base, spot, sigma, perim);
+        const w = (BUMPER_WIDTH + (width - LINE_WIDTH) / 2) * k;
+        const o = BUMPER_OFFSET * k;
+        this.putEdge(ax - nx * o, ay - ny * o, bx - nx * o, by - ny * o, w, tint, start, len, sHit, vib, base, spot, sigma, perim);
+        this.putEdge(ax + nx * o, ay + ny * o, bx + nx * o, by + ny * o, w, tint, start, len, sHit, vib, base, spot, sigma, perim);
       } else {
-        this.putEdge(ax, ay, bx, by, width, tint, start, len, sHit, vib, base, spot, sigma, perim);
+        this.putEdge(ax, ay, bx, by, width * k, tint, start, len, sHit, vib, base, spot, sigma, perim);
       }
     }
     if (!closed && n >= 2) {
-      const r = bumper ? BUMPER_OFFSET + BUMPER_WIDTH / 2 : width / 2;
+      const r = (bumper ? BUMPER_OFFSET + BUMPER_WIDTH / 2 : width / 2) * k;
       const sg = Math.max(sigma, 1);
       const c = this.color;
       c.copy(tint).multiplyScalar(base + spot * Math.exp(-Math.abs(sHit) / sg));
@@ -1085,6 +1198,169 @@ export class Renderer {
     const v = this.verts;
     for (let i = 0; i < n * 2; i++) v[i] = pts[i]!;
     this.drawOutline(v, n, preview.closed, preview.bumper, tint, LINE_WIDTH, base, 0, 1, 0, 0);
+  }
+
+  // ---- 蔦と花 ----
+
+  /** 蔦の、起点から周に沿って d（符号付き）だけ進んだ点での線からのずれ */
+  private vineOff(v: Vine, d: number): number {
+    const k = (2 * Math.PI) / VINE_WAVE;
+    return VINE_AMP * (Math.sin(d * k + v.seed * 6.28) + 0.35 * Math.sin(d * k * 2.3 + v.seed * 11));
+  }
+
+  /** 周上の位置を図形の範囲に収める（閉じた図形は一周で戻る）。開いた図形の外なら NaN */
+  private wrapArc(s: Shape, a: number): number {
+    if (s.closed) return ((a % s.perimeter) + s.perimeter) % s.perimeter;
+    return a < 0 || a > s.perimeter ? NaN : a;
+  }
+
+  /** 衝突した点から蔦を伸ばし、通るところに咲く花を先に予約する（開く時刻は蔦が届く時刻） */
+  private growVine(s: Shape, step: number, x: number, y: number, v: number): void {
+    if (s.perimeter <= 0) return;
+    const last = this.vineAt.get(s.group);
+    if (last !== undefined && step >= last && (step - last) / HZ < VINE_GAP_SEC) return;
+    this.vineAt.set(s.group, step);
+    const arc0 = this.arcPos(s, step, x, y);
+    let reach = VINE_REACH + VINE_REACH_V * v;
+    if (s.closed) reach = Math.min(reach, s.perimeter / 2);
+    const r = (k: number, j: number) => hash01(s.group, step, 300 + k * 8 + j);
+    const vine: Vine = {
+      group: s.group, step, phi0: shapeAngle(s, step), arc0, reach, seed: r(0, 0), note: s.note, life: reach / VINE_SPEED + FLOWER_HOLD_SEC, flowers: [],
+    };
+    const phi = shapeAngle(s, step);
+    const base = noteColor(s.note, 'pitch');
+    const mono = this.params.colorMode === 'mono';
+    const size = VINE_FLOWER_R + VINE_FLOWER_R_V * v;
+    const gain = VINE_FLOWER_GAIN + VINE_FLOWER_GAIN_V * v;
+    let k = 0;
+    const leafC = new Color().copy(VINE_COLOR).lerp(base, 0.25);
+    if (mono) leafC.copy(OFF_WHITE);
+    /** 周上 d（符号付き）の位置に1輪。scale は大きさ、dn・da は蔦からの法線・周方向のずれ（px） */
+    const put = (d: number, scale: number, dn: number, da: number) => {
+      const arc = this.wrapArc(s, arc0 + d + da);
+      if (Number.isNaN(arc)) return;
+      this.pointAt(s, phi, arc);
+      const pt = this.pt;
+      const side = dn >= 0 ? 1 : -1;
+      const off = this.vineOff(vine, d) + dn;
+      const at = step + Math.round((Math.abs(d) / VINE_SPEED) * HZ);
+      const stem = VINE_STEM * size * scale * (0.6 + 0.8 * r(k, 0));
+      const handle = this.flowers.bloom(s.group, at, k, pt.x + pt.nx * off, pt.y + pt.ny * off, {
+        radius: size * scale, gain,
+        faceX: pt.nx * side, faceY: pt.ny * side,
+        tilt: 0.2 + 1.2 * r(k, 1),
+        stem,
+      }, base, mono);
+      vine.flowers.push({ handle, arc, off, at });
+      k++;
+      // 茎の代わりに、花の付け根から左右へ葉を2枚（花はその間から伸びる）
+      const fx = pt.nx * side, fy = pt.ny * side;
+      for (const sgn of [1, -1]) {
+        const a = sgn * (0.55 + 0.4 * r(k, 6));
+        const ca = Math.cos(a), sa = Math.sin(a);
+        const lh = this.flowers.leaf(s.group, at, k, pt.x + pt.nx * off, pt.y + pt.ny * off, {
+          len: (stem * 1.2 + size * scale * 0.3) * (0.8 + 0.4 * r(k, 7)),
+          gain: LEAF_GAIN,
+          dirX: fx * ca - fy * sa,
+          dirY: fx * sa + fy * ca,
+          roll: 0.2 + 0.9 * r(k, 5),
+        }, leafC);
+        vine.flowers.push({ handle: lh, arc, off, at });
+        k++;
+      }
+    };
+    // 葉: 蔦に沿って左右交互に。伸びる向きへ少し倒して出る
+    for (const dir of [1, -1]) {
+      let side = r(k, 3) < 0.5 ? 1 : -1;
+      for (let d = LEAF_GAP * (0.3 + 0.7 * r(k, 2)); d <= reach; d += LEAF_GAP * (0.7 + 0.6 * r(k, 2))) {
+        const arc = this.wrapArc(s, arc0 + dir * d);
+        if (Number.isNaN(arc)) break;
+        this.pointAt(s, phi, arc);
+        const pt = this.pt;
+        const off = this.vineOff(vine, dir * d);
+        // 周の進む向き（法線を -90° 回したもの）
+        const tx = pt.ny, ty = -pt.nx;
+        const ca = Math.cos(LEAF_ANGLE), sa = Math.sin(LEAF_ANGLE);
+        const at = step + Math.round((d / VINE_SPEED) * HZ);
+        const handle = this.flowers.leaf(s.group, at, k, pt.x + pt.nx * off, pt.y + pt.ny * off, {
+          len: size * LEAF_LEN * (0.7 + 0.6 * r(k, 4)),
+          gain: LEAF_GAIN,
+          dirX: pt.nx * side * ca + tx * dir * sa,
+          dirY: pt.ny * side * ca + ty * dir * sa,
+          roll: 0.2 + 0.9 * r(k, 5),
+        }, leafC);
+        vine.flowers.push({ handle, arc, off, at });
+        side = -side;
+        k++;
+      }
+    }
+
+    // 当たった所に大きな1輪
+    put(0, VINE_FLOWER_HIT_SCALE, r(0, 3) < 0.5 ? 1 : -1, 0);
+    for (const dir of [1, -1]) {
+      let d = VINE_FLOWER_GAP * (0.5 + 0.5 * r(k, 2));
+      while (d <= reach) {
+        // 房: 主の1輪に、小さな花を 0〜2 輪添える
+        const side = r(k, 3) < 0.5 ? 1 : -1;
+        put(dir * d, 0.6 + 0.8 * r(k, 4), side * 2, 0);
+        const extra = r(k, 5) < 0.6 ? (r(k, 6) < 0.35 ? 2 : 1) : 0;
+        for (let j = 0; j < extra; j++) {
+          put(dir * d, 0.35 + 0.3 * r(k, 4), -side * (2 + 8 * r(k, 6)), (r(k, 7) - 0.5) * VINE_FLOWER_GAP * 0.8);
+        }
+        d += VINE_FLOWER_GAP * (0.7 + 0.6 * r(k, 2));
+      }
+    }
+    if (this.vines.length >= MAX_VINES) this.vines.shift();
+    this.vines.push(vine);
+  }
+
+  private drawVines(rs: number): void {
+    const mode = this.params.colorMode;
+    const c = this.color;
+    const pt = this.pt;
+    let n = 0;
+    let w = 0;
+    for (const vine of this.vines) {
+      const t = (rs - vine.step) / HZ;
+      const s = this.shapes.get(vine.group);
+      if (!s || t > vine.life + 3 * 0.9) continue;
+      this.vines[w++] = vine;
+      if (t < 0) continue;
+      const phi = shapeAngle(s, rs);
+      // 回っている図形に付いた花は位置を直す
+      // 回っている図形に付いた花・葉は、落ちるまで位置と向きを直す
+      if (s.omega !== 0) {
+        for (const f of vine.flowers) {
+          if ((rs - f.at) / HZ > FLOWER_HOLD_SEC) continue;
+          this.pointAt(s, phi, f.arc);
+          this.flowers.setPos(f.handle, pt.x + pt.nx * f.off, pt.y + pt.ny * f.off, phi - vine.phi0);
+        }
+      }
+      const front = Math.min(vine.reach, t * VINE_SPEED);
+      const fade = Math.exp(-Math.max(0, t - vine.life) / 0.9);
+      c.copy(VINE_COLOR).lerp(noteColor(vine.note, mode), 0.35);
+      if (mode === 'mono') c.copy(OFF_WHITE);
+      for (const dir of [1, -1]) {
+        let px = NaN, py = NaN;
+        for (let d = 0; d <= front && n < MAX_VINE_QUADS; d += VINE_STEP) {
+          const arc = this.wrapArc(s, vine.arc0 + dir * d);
+          if (Number.isNaN(arc)) break;
+          this.pointAt(s, phi, arc);
+          const off = this.vineOff(vine, dir * d);
+          const x = pt.x + pt.nx * off, y = pt.y + pt.ny * off;
+          if (!Number.isNaN(px)) {
+            // 先端ほど細く明るい（伸びている間だけ）
+            const tip = front < vine.reach ? Math.exp(-(front - d) / 12) : 0;
+            const width = VINE_WIDTH * this.thick * (0.5 + 0.5 * Math.min(1, (front - d) / 40 + 0.3));
+            this.putQuad(this.vineQuads, n++, px, py, x, y, width, this.tint.copy(c).multiplyScalar(VINE_GAIN * fade * (1 + 1.5 * tip)));
+          }
+          px = x;
+          py = y;
+        }
+      }
+    }
+    this.vines.length = w;
+    commit(this.vineQuads, n);
   }
 
   // ---- 波紋・放出口 ----
