@@ -556,7 +556,12 @@ export class Renderer {
 
   private onHit(e: Extract<SimEvent, { kind: 'hit' }>): void {
     const s = this.shapes.get(e.group);
-    // circle は拍の頭で図形全体が光る（打点は使わない。ボールはもう離れている）
+    // こだま（D21）: 図形の脈と輪だけ（velocity は減衰済みなので弱い）。ボール・連鎖・共鳴・盛り上がりは動かさない
+    if (e.echo) {
+      if (s) this.trigger(s, e.step, e.velocity, 0);
+      return;
+    }
+    // circle は図形全体が光る（打点は使わない）
     if (s) this.trigger(s, e.step, e.velocity, e.form === 'circle' ? 0 : this.arcPos(s, e.contactStep, e.x, e.y));
 
     // 共鳴: 同じスロットの他の図形がほのかに光る（D11）
@@ -567,16 +572,7 @@ export class Renderer {
       }
     }
 
-    if (e.form === 'circle') {
-      // キックは拍で鳴るのでボールは接触から離れている。ボール自身は光らせず（flash 0）色と連鎖だけ移す。
-      // 接触のあとに別の図形に当たっていたら（そちらの光が新しい）何もしない
-      const prev = this.ballLook.get(e.ballId);
-      if (!prev || prev.step <= e.contactStep) {
-        this.ballLook.set(e.ballId, { note: e.note, step: e.step, v: e.velocity, chain: e.chain, flash: 0 });
-      }
-    } else {
-      this.ballLook.set(e.ballId, { note: e.note, step: e.step, v: e.velocity, chain: e.chain, flash: 1 });
-    }
+    this.ballLook.set(e.ballId, { note: e.note, step: e.step, v: e.velocity, chain: e.chain, flash: 1 });
 
     // 連鎖: 通った図形を覚え、5 連鎖（以後 3 つごと）で順に光らせ直す
     let path = this.ballPath.get(e.ballId);

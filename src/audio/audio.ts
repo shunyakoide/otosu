@@ -49,6 +49,8 @@ const PEN_TINE_LOW = 5.4;
 const PEN_TINE_HIGH = 4.0;
 
 // ---- circle: 柔らかいキック〜タム ----
+/** こだま1回ごとの音量の下げ幅（dB。velocity の減衰に加える。D21） */
+const ECHO_DB = -4;
 const KICK_VOICES = 4;
 const KICK_BASE_DB = -16;
 const KICK_RELEASE = 0.3;
@@ -381,6 +383,13 @@ export class Audio {
   /** 形（e.form）で楽器を振り分ける（D16）。バンパーはどの形でもアタックを強める */
   play(e: HitEvent, time: number): void {
     if (!this.started) return;
+    if (e.echo) {
+      // こだま（D21）: 当たった音より弱く（velocity は sim で減衰済み）、少し遠く・暗くする。energy は動かさない
+      const at = Math.max(time, this.raw.currentTime);
+      const pan = clamp(this.stereoWidth * ((2 * e.x) / WORLD_W - 1), -1, 1);
+      this.strikeKick(e.midi, e.velocity, pan, at, false, ECHO_DB * e.echo);
+      return;
+    }
     this.updateEnergy(e.energy, time);
 
     // 過去の時刻は Tone が現在時刻に丸めるので、同時刻の判定もそれに合わせる

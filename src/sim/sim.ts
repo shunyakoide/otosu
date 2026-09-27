@@ -1,6 +1,6 @@
 import { closestOnSegment, rayCapsule, type Hit } from './collide';
 import {
-  BALL_LINE_COOLDOWN, BUMPER_MAX_SPEED, BUMPER_RESTITUTION, CHAIN_WINDOW, DRIFT_AMP_DEFAULT, DRIFT_AMP_MAX,
+  BALL_LINE_COOLDOWN, ECHO_COUNT, ECHO_DECAY, BUMPER_MAX_SPEED, BUMPER_RESTITUTION, CHAIN_WINDOW, DRIFT_AMP_DEFAULT, DRIFT_AMP_MAX,
   DRIFT_PERIOD, DT, ENERGY_HITS, G, HISTORY, HIT_RADIUS, HZ, LINE_COOLDOWN, MAX_AGE_STEPS, MAX_BALLS, MAX_SEGS,
   MAX_SHAPE_EDGES, MIN_LINE_LEN, PHRASE_LEN, REST_VN, RESTITUTION, SECTION_BARS, STALL_SPEED, STALL_STEPS,
   TANGENT_KEEP, V_MIN, WORLD_H, WORLD_W, impactVelocity, maxOmega,
@@ -71,7 +71,7 @@ export function driftOffset(mode: DriftMode, amp: number, emitterId: number, k: 
 export type Shape = {
   group: number;
   kind: SegKind;
-  /** 形（D16）。音色と、circle なら拍にそろえるか（D17） */
+  /** 形（D16）。音色と、circle ならこだまを返すか（D21） */
   form: ShapeForm;
   dir: 1 | -1;
   closed: boolean;
@@ -162,10 +162,10 @@ export class Sim {
   /** energy 用: 直近の衝突イベントのステップ（古い順） */
   private recentHits: number[] = [];
   /**
-   * circle の保留キック（D17）。group → 次の拍の頭で出す HitEvent（step = 拍のステップ、contactStep = 接触）。
-   * 1つの図形の保留は常に1つ（接触から次の拍までの接触はすべてその拍にまとまるため）。Map の挿入順で出すので決定論的
+   * circle のこだま（D21）。group → 当たった音（echo 0）の写しと、次に出すこだまの番号・ステップ。
+   * 1つの図形のこだまは常に1列（同じ円にまた当たったら、その音から数え直す）。Map の挿入順で出すので決定論的
    */
-  private pendingKicks = new Map<number, HitEvent>();
+  private echoes = new Map<number, { ev: HitEvent; k: number; step: number }>();
   private readonly history: Snapshot[] = [];
   private readonly hit: Hit = { t: 0, nx: 0, ny: 0 };
   private readonly near = { dist: 0, nx: 0, ny: 0 };
@@ -226,7 +226,7 @@ export class Sim {
     this.updatePoses(s);
     this.emit(s);
     this.integrate(s);
-    this.flushKicks(s);
+    this.flushEchoes(s);
     this.cull(s);
     this.record(s);
     this.step = s + 1;
@@ -282,7 +282,7 @@ export class Sim {
     let w = 0;
     for (const seg of this.segments) if (seg.group !== group) this.segments[w++] = seg;
     this.segments.length = w;
-    this.pendingKicks.delete(group); // 消えた図形の保留キックは鳴らさない（D17）
+    this.echoes.delete(group); // 消えた図形のこだまは鳴らさない（D21）
     this.events.push({ kind: 'shapeRemoved', step: s, group });
   }
 
@@ -290,7 +290,7 @@ export class Sim {
     for (const group of this.shapes.keys()) this.events.push({ kind: 'shapeRemoved', step: s, group });
     this.shapes.clear();
     this.segments.length = 0;
-    this.pendingKicks.clear();
+    this.echoes.clear();
   }
 
   private setTempo(s: number, bpm: number, pattern: readonly number[]): void {
@@ -301,12 +301,11 @@ export class Sim {
     this.pattern = [...pattern];
     this.sectionLen = sectionSteps(bpm, SECTION_BARS, HZ);
     this.setupEmitters(bpm, pattern, s);
-    // 保留キックは新しい拍の格子に取り直す: 接触ステップ以降の最初の新しい拍（格子は s から始まるので、
-    // s より前の接触はこのステップ s の頭で鳴る）。捨てずに鳴らすのは、叩いた音が消えないようにするため
-    for (const ev of this.pendingKicks.values()) ev.step = this.beatAtOrAfter(ev.contactStep);
+    // こだまは新しい拍の格子に取り直す（格子は s から始まるので、残りのこだまはこのステップ s 以降の拍で鳴る）
+    for (const e of this.echoes.values()) e.step = this.beatAtOrAfter(Math.max(s, e.ev.contactStep + 1));
   }
 
-  /** 拍の格子 harmonyAnchor + round(k·HZ·60/bpm) のうち、c 以上で最初のステップ（D17。放出の格子と同じ式） */
+  /** 拍の格子 harmonyAnchor + round(k·HZ·60/bpm) のうち、c 以上で最初のステップ（D21。放出の格子と同じ式） */
   beatAtOrAfter(c: number): number {
     const a = this.harmonyAnchor;
     const p = (HZ * 60) / this.bpm;
@@ -617,17 +616,6 @@ export class Sim {
     if (!hitAllowed(s, impact, last, sh.lastEventStep)) return true;
     sh.lastEventStep = s;
 
-    // circle（D17）: 同じ拍にすでに保留キックがあれば1つにまとめる（x, y, ballId, chain, energy は最初の接触のまま、
-    // velocity と normalSpeed は最大）。まとめた接触は鳴らないので chain・energy には数えない。クールダウンは接触で数える
-    if (sh.form === 'circle') {
-      const pend = this.pendingKicks.get(seg.group);
-      if (pend) {
-        pend.normalSpeed = Math.max(pend.normalSpeed, impact);
-        pend.velocity = Math.max(pend.velocity, impactVelocity(impact));
-        return true;
-      }
-    }
-
     // chain: 直前の衝突から CHAIN_WINDOW 以内に別の図形なら +1
     b.chain = s - b.lastEventStep <= CHAIN_WINDOW && b.lastEventGroup !== seg.group ? b.chain + 1 : 1;
     b.lastEventStep = s;
@@ -646,6 +634,7 @@ export class Sim {
       kind: 'hit',
       step: s,
       contactStep: s,
+      echo: 0,
       ballId: b.id,
       lineId: seg.id,
       x: b.x,
@@ -661,29 +650,40 @@ export class Sim {
       chain: b.chain,
       energy: Math.min(1, hits.length / ENERGY_HITS),
     };
-    if (sh.form !== 'circle') {
-      this.events.push(ev);
-      return true;
+    this.events.push(ev);
+    // circle（D21）: 当たった瞬間に鳴らし、そのあと接触より後の拍の頭でこだまを返す（flushEchoes）。
+    // 同じ円のこだまが残っていれば捨てて、この音から数え直す
+    if (sh.form === 'circle' && ECHO_COUNT > 0) {
+      this.echoes.delete(seg.group);
+      this.echoes.set(seg.group, { ev: { ...ev }, k: 1, step: this.beatAtOrAfter(s + 1) });
     }
-    // circle（D17）: 跳ね返りはその場、鳴らすのは接触以降の最初の拍の頭（flushKicks）
-    ev.step = this.beatAtOrAfter(s);
-    this.pendingKicks.set(seg.group, ev);
     return true;
   }
 
   /**
-   * 拍の頭に来た保留キックを出す（integrate の後なので、ちょうど拍の頭の接触もこのステップで鳴る）。
-   * 区間と音高は鳴らすステップで決める。出すイベントの step はすべて s（drainEvents の順序は崩れない）
+   * 拍の頭に来たこだまを出す（D21）。velocity は ECHO_DECAY^k 倍、区間と音高は鳴らすステップで決め直す。
+   * 出すイベントの step はすべて s（drainEvents の順序は崩れない）。chain・energy には数えない
    */
-  private flushKicks(s: number): void {
-    if (this.pendingKicks.size === 0) return;
-    for (const [group, ev] of this.pendingKicks) {
-      if (ev.step > s) continue;
-      ev.step = s;
-      ev.section = this.sectionAt(s);
-      ev.midi = formMidi(ev.form, ev.note, ev.section);
-      this.events.push(ev);
-      this.pendingKicks.delete(group);
+  private flushEchoes(s: number): void {
+    if (this.echoes.size === 0) return;
+    for (const [group, e] of this.echoes) {
+      if (e.step > s) continue;
+      const f = Math.pow(ECHO_DECAY, e.k);
+      const section = this.sectionAt(s);
+      this.events.push({
+        ...e.ev,
+        step: s,
+        echo: e.k,
+        velocity: e.ev.velocity * f,
+        normalSpeed: e.ev.normalSpeed * f,
+        section,
+        midi: formMidi(e.ev.form, e.ev.note, section),
+      });
+      if (e.k >= ECHO_COUNT) this.echoes.delete(group);
+      else {
+        e.k++;
+        e.step = this.beatAtOrAfter(s + 1);
+      }
     }
   }
 

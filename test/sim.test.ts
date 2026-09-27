@@ -4,7 +4,7 @@ import { formMidi, kickMidi, lengthToNote, midiAt, PROG, sectionAt, sectionSteps
 import { inferForm } from '../src/sim/form';
 import { rayCapsule } from '../src/sim/collide';
 import {
-  BALL_LINE_COOLDOWN, BUMPER_MAX_SPEED, CHAIN_WINDOW, DRIFT_PERIOD, ENERGY_HITS, HZ, LINE_COOLDOWN, MAX_SEGS, SECTION_BARS, V_MIN,
+  BALL_LINE_COOLDOWN, BUMPER_MAX_SPEED, CHAIN_WINDOW, ECHO_COUNT, ECHO_DECAY, DRIFT_PERIOD, ENERGY_HITS, HZ, LINE_COOLDOWN, MAX_SEGS, SECTION_BARS, V_MIN,
 } from '../src/sim/constants';
 import { decodeScene, encodeScene, sceneFromSim, validateScene } from '../src/scene/scene';
 import type { DriftMode, HitEvent, SceneData, SceneDataV1, ShapeAddedEvent, ShapeForm, SimEvent } from '../src/sim/types';
@@ -379,8 +379,8 @@ describe('chain / energy / section (D14)', () => {
     expect(a).toBe(b);
   });
 
-  // chain・energy は接触時に計算する（D17）ので、接触ステップ順に並べて確かめる
-  const byContact = (hs: HitEvent[]) => [...hs].sort((a, b) => a.contactStep - b.contactStep);
+  // chain・energy は当たった音で計算する。こだま（D21）は数えないので除く
+  const byContact = (hs: HitEvent[]) => hs.filter((h) => h.echo === 0);
 
   it('counts chains across different shapes within the window', () => {
     const hits = byContact(hitsOf(run(stairs(), 6000)));
@@ -396,7 +396,7 @@ describe('chain / energy / section (D14)', () => {
 
   it('computes energy from the hits in the last 2 bars', () => {
     const sim = stairs();
-    const hits = hitsOf(run(sim, 6000));
+    const hits = hitsOf(run(sim, 6000)).filter((h) => h.echo === 0);
     const W = sim.energyWindow;
     expect(W).toBe(640);
     for (const h of hits) {
@@ -577,7 +577,7 @@ describe('forms (D16)', () => {
   });
 });
 
-describe('kick on the beat (D17)', () => {
+describe('circle echoes on the beat (D21)', () => {
   /** 放出口の真下に円（または同じ点列を別の形で） */
   const drum = (form: ShapeForm, pattern: number[] = [0.25], bpm = 90) => {
     const sim = new Sim({ bpm, pattern, drift: { mode: 'off', amp: 0 } });
@@ -587,76 +587,68 @@ describe('kick on the beat (D17)', () => {
   };
   const circleGroup = 1;
 
-  it('sounds a circle hit on the first beat at or after the contact', () => {
+  it('sounds at the contact, then echoes on the following beats, weaker each time', () => {
     const sim = drum('circle', [2]);
     const events = run(sim, 120 * 20);
-    const kicks = hitsOf(events).filter((h) => h.group === circleGroup);
-    expect(kicks.length).toBeGreaterThan(5);
-    expect(kicks.some((h) => h.contactStep < h.step)).toBe(true);
-    for (const h of kicks) {
-      expect(h.form).toBe('circle');
+    const hs = hitsOf(events).filter((h) => h.group === circleGroup);
+    const direct = hs.filter((h) => h.echo === 0);
+    const echoes = hs.filter((h) => h.echo > 0);
+    expect(direct.length).toBeGreaterThan(3);
+    expect(echoes.length).toBeGreaterThan(3);
+    for (const h of direct) expect(h.step).toBe(h.contactStep);
+    for (const h of echoes) {
+      expect(h.echo).toBeLessThanOrEqual(ECHO_COUNT);
       expect(h.step % 80).toBe(0); // 90BPM → 1拍 80 ステップ、基準 0
-      expect(h.contactStep).toBeLessThanOrEqual(h.step);
-      expect(h.step - h.contactStep).toBeLessThan(80);
-      expect(h.step).toBe(sim.beatAtOrAfter(h.contactStep));
+      expect(h.step).toBeGreaterThan(h.contactStep);
       expect(h.section).toBe(sim.sectionAt(h.step));
       expect(h.midi).toBe(kickMidi(h.note, h.section));
+      // こだまの元 = その円に最後に当たった音
+      const src = direct.filter((d) => d.contactStep <= h.contactStep).at(-1)!;
+      expect(src.contactStep).toBe(h.contactStep);
+      expect(h.velocity).toBeCloseTo(src.velocity * Math.pow(ECHO_DECAY, h.echo), 10);
+      // 元の音とこだまの間に、同じ円への新しい当たりはない（当たったら数え直す）
+      expect(direct.some((d) => d.step > src.step && d.step < h.step)).toBe(false);
     }
-    // circle 以外は接触ステップ = 鳴らすステップ
-    for (const h of hitsOf(events).filter((x) => x.group !== circleGroup)) expect(h.contactStep).toBe(h.step);
+    // circle 以外にこだまはない
+    for (const h of hitsOf(events).filter((x) => x.group !== circleGroup)) {
+      expect(h.echo).toBe(0);
+      expect(h.contactStep).toBe(h.step);
+    }
     // イベント列の step は減らない（render / main が step で読み進めるため）
     for (let i = 1; i < events.length; i++) expect(events[i]!.step).toBeGreaterThanOrEqual(events[i - 1]!.step);
   });
 
-  it('merges hits within one beat into one kick (max velocity, first contact)', () => {
-    // 形は物理に影響しないので、同じ点列の pen は接触ごとの音を出す → 拍ごとにまとめたものと一致するはず
-    const a = drum('circle');
-    const kicks = hitsOf(run(a, 120 * 20)).filter((h) => h.group === circleGroup);
-    const b = drum('pen');
-    const raw = hitsOf(run(b, 120 * 20)).filter((h) => h.group === circleGroup);
-    const byBeat = new Map<number, HitEvent[]>();
-    for (const h of raw) {
-      const beat = b.beatAtOrAfter(h.contactStep);
-      if (beat >= 120 * 20) continue; // まだ鳴っていない
-      byBeat.set(beat, [...(byBeat.get(beat) ?? []), h]);
-    }
-    expect([...byBeat.values()].some((hs) => hs.length > 1)).toBe(true);
-    expect(kicks.map((k) => k.step)).toEqual([...byBeat.keys()]);
-    for (const k of kicks) {
-      const hs = byBeat.get(k.step)!;
-      const first = hs[0]!;
-      expect([k.contactStep, k.ballId, k.x, k.y, k.lineId]).toEqual([first.contactStep, first.ballId, first.x, first.y, first.lineId]);
-      expect(k.velocity).toBe(Math.max(...hs.map((h) => h.velocity)));
-      expect(k.normalSpeed).toBe(Math.max(...hs.map((h) => h.normalSpeed)));
-    }
+  it('the direct hits match a pen with the same points (echoes are extra)', () => {
+    const a = hitsOf(run(drum('circle'), 120 * 20)).filter((h) => h.group === circleGroup && h.echo === 0);
+    const b = hitsOf(run(drum('pen'), 120 * 20)).filter((h) => h.group === circleGroup);
+    expect(a.map((h) => [h.step, h.velocity])).toEqual(b.map((h) => [h.step, h.velocity]));
   });
 
-  /** 保留中（接触済み・拍の前）になるステップ: pen の双子で接触を探す */
+  /** こだまが残っているステップ: 当たった直後 */
   const pendingAt = () => {
-    const twin = drum('pen', [2]);
-    const c = hitsOf(run(twin, 120 * 10)).find((h) => h.group === circleGroup && twin.beatAtOrAfter(h.contactStep) > h.contactStep + 1)!;
-    return c.contactStep;
+    const twin = drum('circle', [2]);
+    return hitsOf(run(twin, 120 * 10)).find((h) => h.group === circleGroup && h.echo === 0 && twin.beatAtOrAfter(h.step + 1) > h.step + 1)!.step;
   };
 
-  it('drops the pending kick when the shape is removed or cleared', () => {
+  it('drops the echoes when the shape is removed or cleared', () => {
     const c = pendingAt();
     for (const cmd of [{ kind: 'removeShape', group: circleGroup }, { kind: 'clearSegments' }] as const) {
       const sim = drum('circle', [2]);
-      run(sim, c + 1); // ステップ c まで実行済み（接触済み・未発音）
+      run(sim, c + 1); // ステップ c まで実行済み（当たった音は出た・こだまは未発音）
       sim.enqueue(cmd);
       const later = hitsOf(run(sim, 400)).filter((h) => h.group === circleGroup);
       expect(later).toEqual([]);
     }
   });
 
-  it('re-snaps a pending kick to the new beat grid on setTempo', () => {
+  it('re-snaps echoes to the new beat grid on setTempo', () => {
     const c = pendingAt();
     const sim = drum('circle', [2]);
     run(sim, c + 1);
     sim.enqueue({ kind: 'setTempo', bpm: 120, pattern: [2] });
-    const k = hitsOf(run(sim, 1)).filter((h) => h.group === circleGroup);
-    // 新しい格子はステップ c+1 から始まる → 保留はその頭で鳴る
-    expect(k.map((h) => [h.step, h.contactStep])).toEqual([[c + 1, c]]);
+    const k = hitsOf(run(sim, 1)).filter((h) => h.group === circleGroup && h.echo > 0);
+    // 新しい格子はステップ c+1 から始まる → 最初のこだまはその頭で鳴る
+    expect(k.map((h) => [h.step, h.contactStep, h.echo])).toEqual([[c + 1, c, 1]]);
   });
 
   it('is deterministic, including after loadScene', () => {
