@@ -7,6 +7,8 @@ const svg = (body: string) =>
   `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">${body}</svg>`;
 
 const ICONS = {
+  play: svg('<path d="M8 5.5v13l10.5-6.5z"/>'),
+  pause: svg('<path d="M9 5.5v13M15 5.5v13"/>'),
   line: svg('<path d="M5 17 19 7"/>'),
   pen: svg('<path d="M4 16c3-7 5 3 8-3s5 2 8-4"/>'),
   circle: svg('<circle cx="12" cy="12" r="7"/>'),
@@ -32,6 +34,7 @@ const TOOL_LABELS: Record<Tool, string> = {
 };
 
 export type ToolbarActions = {
+  play: () => void;
   tool: (t: Tool) => void;
   mute: () => void;
   /** 音量（dB）。つまみを動かしている間ずっと呼ぶ */
@@ -54,6 +57,7 @@ export class Toolbar {
   readonly el: HTMLElement;
   private readonly tools = new Map<Tool, HTMLButtonElement>();
   private readonly muteBtn: HTMLButtonElement;
+  private readonly playBtn: HTMLButtonElement;
   /** 小窓を開くボタン */
   private readonly popBtns: Record<'motion' | 'light' | 'scenes', HTMLButtonElement>;
   private readonly volumeInput: HTMLInputElement;
@@ -80,6 +84,8 @@ export class Toolbar {
     };
     const sep = () => this.el.appendChild(document.createElement('i'));
 
+    this.playBtn = btn(ICONS.pause, 'pause (space)', on.play);
+    sep();
     tools.forEach((t, i) => this.tools.set(t, btn(ICONS[t], `${TOOL_LABELS[t]} (${i + 1})`, () => on.tool(t))));
     sep();
 
@@ -134,7 +140,7 @@ export class Toolbar {
     help.id = 'toolbar-help';
     help.textContent = matchMedia('(hover: none)').matches
       ? 'drag: draw · long-press: erase'
-      : 'drag: draw · shift: bumper · right-click: erase · H: hide ui · , : fine-tune';
+      : 'drag: draw · shift: bumper · right-click: erase · space: pause · H: hide ui · , : fine-tune';
     help.classList.add('ui');
     parent.append(this.el, help);
   }
@@ -148,6 +154,13 @@ export class Toolbar {
     this.muteBtn.classList.toggle('warn', muted);
     this.muteBtn.title = muted ? 'unmute (M)' : 'mute (M)';
     this.el.classList.toggle('muted', muted);
+  }
+
+  setPaused(paused: boolean): void {
+    this.playBtn.innerHTML = paused ? ICONS.play : ICONS.pause;
+    this.playBtn.title = paused ? 'play (space)' : 'pause (space)';
+    this.playBtn.setAttribute('aria-label', this.playBtn.title);
+    this.playBtn.classList.toggle('on', paused);
   }
 
   setVolume(db: number): void {

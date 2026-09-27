@@ -218,6 +218,11 @@ export class Sim {
     return this.segments.find((s) => s.id === segmentId)?.group;
   }
 
+  /** 時刻を進めずに、たまっている編集だけを今のステップで反映する（止めている間。D30） */
+  applyPending(): void {
+    this.applyCommands(this.step);
+  }
+
   advance(): void {
     const s = this.step;
     this.applyCommands(s);

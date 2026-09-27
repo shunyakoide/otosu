@@ -174,7 +174,7 @@ export class Audio {
 
   /**
    * ネイティブの AudioContext を自前で作って Tone に渡す。
-   * Tone が自動で作る Context は互換ラッパーで getOutputTimestamp を持たないため（描画・MIDI の時刻合わせに必要）。
+   * Tone が自動で作る Context は互換ラッパーで、描画・MIDI の時刻合わせに要る生の currentTime や outputLatency を直接読めないため。
    * 他のノードより先に呼ぶ必要があるので、生成とは分けている。
    */
   private static native: AudioContext;

@@ -5,7 +5,6 @@ import {
 } from 'three';
 import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
-import { AfterimagePass } from 'three/addons/postprocessing/AfterimagePass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { closestOnSegment } from '../sim/collide';
@@ -13,6 +12,7 @@ import { BALL_RADIUS, HZ, LINE_WIDTH, MAX_BALLS, MIN_LINE_LEN, WORLD_H, WORLD_W,
 import { lengthToNote } from '../sim/music';
 import type { SegKind, ShapeAddedEvent, ShapeForm, SimEvent, Snapshot } from '../sim/types';
 import { FLOWER_HOLD_SEC, Flowers } from './flowers';
+import { FlowPass } from './flow';
 import { GRAY, noteColor, OFF_WHITE, type ColorMode } from './palette';
 import { QualityGovernor, type QualityLevel } from './quality';
 
@@ -26,6 +26,9 @@ export type RenderParams = {
   colorMode: ColorMode;
   bloomStrength: number;
   afterimage: number;
+  /** 残像のエフェクト（D31）: 当たった図形から光が垂れる（drip）のオン・オフと、垂れる速さ（px/s） */
+  drip?: boolean;
+  dripSpeed?: number;
   idleLine: number;
   /** 'geometry' = 履歴から尾を描く（ステップ2）/ 'afterimage' = ステップ1の見た目（尾なし・damp 0.88） */
   trail?: TrailMode;
@@ -143,6 +146,9 @@ const VINE_REACH = 90;
 const VINE_REACH_V = 320;
 /** 同じ図形で次の蔦を伸ばすまでの最短間隔（秒） */
 const VINE_GAP_SEC = 0.4;
+/** まだ茎に付いている花や葉からこの距離（px、周に沿って）以内には、新しく咲かせない（重なって濁らないように） */
+const VINE_CROWD_FLOWER = 32;
+const VINE_CROWD_LEAF = 14;
 /** 図形の線をまたいで巻きつく揺れ（px）と波長（px） */
 const VINE_AMP = 5;
 const VINE_WAVE = 70;
@@ -170,6 +176,8 @@ const VINE_COLOR = new Color(0x6fcf7a);
 
 /** at = 咲き始めるステップ（落ち始めたら図形に付いて動かすのをやめる） */
 type VineFlower = { handle: number; arc: number; off: number; at: number };
+/** 図形の周上で、花や葉が咲いている場所と期間（ステップ） */
+type Bloomed = { arc: number; from: number; until: number; leaf: boolean };
 
 type Vine = {
   group: number; step: number; phi0: number; arc0: number; reach: number; seed: number; note: number;
@@ -314,7 +322,7 @@ export class Renderer {
   private readonly scene = new Scene();
   private readonly camera = new OrthographicCamera(0, WORLD_W, 0, -WORLD_H, -10, 10);
   private readonly composer: EffectComposer;
-  private readonly afterimage: AfterimagePass;
+  private readonly afterimage = new FlowPass();
   private readonly bloom: UnrealBloomPass;
 
   private readonly balls = instanced(new CircleGeometry(1, 20), MAX_BALLS + 1, 3);
@@ -331,6 +339,7 @@ export class Renderer {
   private readonly vineQuads = instanced(new PlaneGeometry(1, 1), MAX_VINE_QUADS, 1);
   private readonly vines: Vine[] = [];
   private readonly vineAt = new Map<number, number>();
+  private readonly bloomed = new Map<number, Bloomed[]>();
 
   // きらめき（triangle）のリングバッファ。gStep = Infinity は空き
   private readonly gGroup = new Int32Array(MAX_GLINTS);
@@ -407,7 +416,6 @@ export class Renderer {
     const rt = new WebGLRenderTarget(1, 1, { type: HalfFloatType, samples: 4 });
     this.composer = new EffectComposer(this.renderer, rt);
     this.composer.addPass(new RenderPass(this.scene, this.camera));
-    this.afterimage = new AfterimagePass(params.afterimage);
     this.composer.addPass(this.afterimage);
     this.bloom = new UnrealBloomPass(new Vector2(1, 1), params.bloomStrength, 0.35, 0.8);
     this.composer.addPass(this.bloom);
@@ -765,12 +773,8 @@ export class Renderer {
           break;
         }
         case 'shapeRemoved': {
-          const s = this.shapes.get(e.group);
+          const s = this.dropShape(e.group);
           if (!s) break;
-          this.shapes.delete(e.group);
-          this.hoverAmt.delete(e.group);
-          this.flowers.forget(e.group);
-          this.vineAt.delete(e.group);
           if (e.step !== removedStep) {
             this.stagger(removed);
             removed = [];
@@ -785,6 +789,39 @@ export class Renderer {
     }
     this.stagger(removed);
     if (n > 0) this.pending.splice(0, n);
+  }
+
+  /** 図形を描く対象から外す（消える動きは呼んだ側で決める） */
+  private dropShape(group: number): Shape | undefined {
+    const s = this.shapes.get(group);
+    if (!s) return undefined;
+    this.shapes.delete(group);
+    this.hoverAmt.delete(group);
+    this.flowers.forget(group);
+    this.vineAt.delete(group);
+    this.bloomed.delete(group);
+    return s;
+  }
+
+  /**
+   * 止めている間の編集（D30）: 図形の追加・削除・向きは renderStep を待たずにすぐ反映する。
+   * 描画の時刻が止まっているので、消す図形は消える動きなしで消す
+   */
+  applyEditsNow(): void {
+    const rest: SimEvent[] = [];
+    for (const e of this.pending) {
+      if (e.kind === 'shapeAdded') this.addShape(e);
+      else if (e.kind === 'shapeRemoved') this.dropShape(e.group);
+      else if (e.kind === 'shapePose') {
+        const s = this.shapes.get(e.group);
+        if (s) {
+          s.theta0 = e.theta0;
+          s.rotStartStep = e.rotStartStep;
+          s.omega = e.omega;
+        }
+      } else rest.push(e);
+    }
+    this.pending = rest;
   }
 
   /** 同じステップで複数の図形が消えた（clear / loadScene）ときは左から右へ拭うように消す */
@@ -809,8 +846,12 @@ export class Renderer {
     const target = this.energyTarget * (since < 2 ? 1 : Math.exp(-(since - 2) / 2));
     this.energy += (target - this.energy) * (1 - Math.exp(-dt / 1.5));
     this.bloom.strength = p.bloomStrength * (1 + 0.2 * this.energy);
-    const damp = geometryTrail ? p.afterimage : LEGACY_DAMP;
-    this.afterimage.uniforms['damp']!.value = Math.pow(damp, dt * 60);
+    // 流れ落ちる残像（D31）: 流すときは残像を長めに残す
+    this.afterimage.set(dt, {
+      drip: p.drip ?? false,
+      dripSpeed: p.dripSpeed ?? 90,
+      damp: geometryTrail ? p.afterimage : LEGACY_DAMP,
+    }, innerWidth, innerHeight);
 
     const head = src.snapshot(Math.floor(rs));
     this.drawBalls(src, rs);
@@ -1224,6 +1265,21 @@ export class Renderer {
     let reach = VINE_REACH + VINE_REACH_V * v;
     if (s.closed) reach = Math.min(reach, s.perimeter / 2);
     const r = (k: number, j: number) => hash01(s.group, step, 300 + k * 8 + j);
+    // 同じ所に続けて当たっても、まだ咲いている所には重ねない（散ったあとにまた咲く）
+    const hold = Math.round(FLOWER_HOLD_SEC * HZ);
+    const busy = (this.bloomed.get(s.group) ?? []).filter((b) => b.from <= step && step < b.until);
+    const taken: Bloomed[] = [];
+    const free = (arc: number, at: number, leaf: boolean): boolean => {
+      const gap = leaf ? VINE_CROWD_LEAF : VINE_CROWD_FLOWER;
+      for (const b of busy) {
+        if (b.leaf !== leaf || at < b.from || at >= b.until) continue;
+        let d = Math.abs(arc - b.arc);
+        if (s.closed) d = Math.min(d, s.perimeter - d);
+        if (d < gap) return false;
+      }
+      taken.push({ arc, from: at, until: at + hold, leaf });
+      return true;
+    };
     const vine: Vine = {
       group: s.group, step, phi0: shapeAngle(s, step), arc0, reach, seed: r(0, 0), note: s.note, life: reach / VINE_SPEED + FLOWER_HOLD_SEC, flowers: [],
     };
@@ -1244,6 +1300,7 @@ export class Renderer {
       const side = dn >= 0 ? 1 : -1;
       const off = this.vineOff(vine, d) + dn;
       const at = step + Math.round((Math.abs(d) / VINE_SPEED) * HZ);
+      if (!free(arc, at, false)) return;
       const stem = VINE_STEM * size * scale * (0.6 + 0.8 * r(k, 0));
       const handle = this.flowers.bloom(s.group, at, k, pt.x + pt.nx * off, pt.y + pt.ny * off, {
         radius: size * scale, gain,
@@ -1282,6 +1339,11 @@ export class Renderer {
         const tx = pt.ny, ty = -pt.nx;
         const ca = Math.cos(LEAF_ANGLE), sa = Math.sin(LEAF_ANGLE);
         const at = step + Math.round((d / VINE_SPEED) * HZ);
+        if (!free(arc, at, true)) {
+          side = -side;
+          k++;
+          continue;
+        }
         const handle = this.flowers.leaf(s.group, at, k, pt.x + pt.nx * off, pt.y + pt.ny * off, {
           len: size * LEAF_LEN * (0.7 + 0.6 * r(k, 4)),
           gain: LEAF_GAIN,
@@ -1310,6 +1372,7 @@ export class Renderer {
         d += VINE_FLOWER_GAP * (0.7 + 0.6 * r(k, 2));
       }
     }
+    this.bloomed.set(s.group, busy.concat(taken));
     if (this.vines.length >= MAX_VINES) this.vines.shift();
     this.vines.push(vine);
   }

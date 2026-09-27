@@ -17,7 +17,10 @@ const OPEN_SEC = 0.7;
 const INNER_DELAY = 0.25;
 /** 咲いたまま残る時間（秒）。そのあと茎を離れて落ち、FADE_TAU の時定数で消えていく */
 const HOLD_SEC = 2.4;
-const FADE_TAU = 3.2;
+const FADE_TAU = 2.0;
+/** 茎を離れるとすぐ、この割合まで暗くなる（時定数 DROP_TAU 秒）。咲いている花が落ちたものに埋もれないように */
+const DROP_DIM = 0.55;
+const DROP_TAU = 0.6;
 /** 落ちる速さ: 空気の抵抗で FALL_V（px/s）に近づく（時定数 FALL_TAU 秒）。横揺れ（px）と、回転の速さ（rad/s） */
 const FALL_V = 95;
 const FALL_TAU = 0.7;
@@ -171,7 +174,7 @@ void main() {
     return;
   }
   float tf = max(0.0, uTime - aPos.w - ${HOLD_SEC.toFixed(3)}); // 落ち始めてからの秒数（花ごとにそろえる）
-  float fade = exp(-tf / ${FADE_TAU.toFixed(3)});
+  float fade = exp(-tf / ${FADE_TAU.toFixed(3)}) * mix(${DROP_DIM.toFixed(2)}, 1.0, exp(-tf / ${DROP_TAU.toFixed(2)}));
   float p = min(1.0, t / ${OPEN_SEC.toFixed(3)});
   // 蕾から開き、しぼむときは少し閉じる
   // 少し行き過ぎてから落ち着く（勢いよく開く。明るさは上げない）

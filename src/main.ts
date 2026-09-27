@@ -1,4 +1,5 @@
 import { Audio } from './audio/audio';
+import { AudioClock } from './audio/clock';
 import { Input, TOOLS, type Tool } from './input/input';
 import { Midi } from './midi/midi';
 import { Renderer, TOP_BAND_PX } from './render/render';
@@ -51,6 +52,8 @@ const DEFAULTS = {
   colorMode: 'pitch' as (typeof COLOR_MODES)[number],
   bloomStrength: 0.9,
   afterimage: 0.8,
+  drip: true,
+  dripSpeed: 90,
   flowers: true,
   idleLine: 0.3,
   visualOffsetMs: 0,
@@ -145,6 +148,7 @@ const setTool = (t: Tool) => {
 
 // ---- ツールバーと設定パネル（D24） ----
 const toolbar = new Toolbar(document.body, TOOLS, {
+  play: () => setPaused(!paused),
   tool: (t) => setTool(t),
   mute: () => toggleMute(),
   volume: (db) => {
@@ -209,6 +213,8 @@ const lightPop = new Popover(document.body);
   l.slider(params, 'bloomStrength', { label: 'glow', min: 0, max: 2, step: 0.01 });
   l.slider(params, 'idleLine', { label: 'lines', min: 0.15, max: 0.45, step: 0.01 });
   l.slider(params, 'afterimage', { label: 'trail', min: 0.7, max: 0.97, step: 0.005, format: (v) => v.toFixed(2) });
+  l.toggle(params, 'drip', 'drip');
+  l.slider(params, 'dripSpeed', { label: 'drip speed', min: 10, max: 300, step: 5, format: (v) => `${v}` });
   l.choice(params, 'colorMode', 'color', () => COLOR_MODES.map((value) => ({ value, label: value === 'pitch' ? 'by pitch' : 'white' })));
   l.toggle(params, 'flowers', 'flowers');
 }
@@ -247,6 +253,20 @@ function toggleSettings(open = !panel.isOpen): void {
 function toggleFullscreen(): void {
   if (document.fullscreenElement) void document.exitFullscreen();
   else void document.documentElement.requestFullscreen();
+}
+/**
+ * 再生・停止（D30）。AudioContext ごと止めるので、音の時刻が止まり、sim も描画もその場で止まる。
+ * 再生すると同じ時刻から続く（t0 を取り直す必要がない）。止めている間に描いた図形は、再生すると置かれる
+ */
+function setPaused(p: boolean): void {
+  if (!started || p === paused) return;
+  paused = p;
+  const ctx = audio.raw;
+  if (p) {
+    void ctx.suspend();
+    midi.allNotesOff();
+  } else void ctx.resume();
+  toolbar.setPaused(p);
 }
 function toggleMute(): void {
   params.muted = !params.muted;
@@ -461,6 +481,9 @@ addEventListener('keydown', (e) => {
     toggleRecording();
   } else if (e.key === 's' || e.key === 'S') {
     void copySceneUrl();
+  } else if (e.key === ' ') {
+    e.preventDefault();
+    setPaused(!paused);
   } else if (e.key === 'm' || e.key === 'M') {
     toggleMute();
   } else if (e.key >= '1' && e.key <= String(TOOLS.length)) {
@@ -488,6 +511,9 @@ addEventListener('resize', layout);
 
 // ---- 開始 ----
 let started = false;
+let paused = false;
+/** 直近に描いた renderStep（止めている間はここで止める） */
+let lastRs = -1;
 let t0 = 0;
 const overlay = document.getElementById('overlay')!;
 // iOS Safari は pointerdown では音を出させてくれないので click で始める
@@ -504,30 +530,18 @@ overlay.addEventListener('click', async () => {
   audio.setPadLevel(params.padLevel);
   audio.setMuted(params.muted);
   const ctx = audio.raw;
+  clock.measureLatency(ctx);
+  // 出力の遅れは鳴り始めてから決まる端末があるので、少し後にもう一度だけ読む
+  setTimeout(() => clock.measureLatency(ctx), 1500);
   console.info(`[otosu] baseLatency=${ctx.baseLatency} outputLatency=${ctx.outputLatency}`);
   t0 = ctx.currentTime + 0.1;
   started = true;
   overlay.remove();
 });
 
-/** AudioContext 時刻 → その音がスピーカーから聞こえる performance.now 時刻（出力遅延込み） */
-function toPerf(audioTime: number): number {
-  const ctx = audio.raw;
-  const ts = ctx.getOutputTimestamp?.();
-  if (ts && ts.contextTime && ts.performanceTime) {
-    return ts.performanceTime + (audioTime - ts.contextTime) * 1000;
-  }
-  return performance.now() + (audioTime - ctx.currentTime + (ctx.outputLatency || 0)) * 1000;
-}
-
-/** 今スピーカーから出ている音のコンテキスト時刻（滑らかにしたもの） */
-function audibleTime(ctx: AudioContext): number {
-  const ts = ctx.getOutputTimestamp?.();
-  if (ts && ts.contextTime && ts.performanceTime) {
-    return ts.contextTime + (performance.now() - ts.performanceTime) / 1000;
-  }
-  return ctx.currentTime - (ctx.outputLatency || 0);
-}
+// 音の時計（D29）: getOutputTimestamp は音声スレッドを待って固まることがあるので使わない
+const clock = new AudioClock();
+const toPerf = (audioTime: number): number => clock.toPerf(audioTime);
 
 // ?fps: 実機で重さを確かめるための表示（fps と画質の段階。D27）
 const fpsEl = new URLSearchParams(location.search).has('fps') ? document.body.appendChild(document.createElement('div')) : null;
@@ -551,8 +565,18 @@ function frame(now: number): void {
     return;
   }
 
+  if (paused) {
+    // 置いた・消した図形はすぐ反映する（置いた音は鳴らさない）。経過時間 0 で描き直すので、絵は止まったまま
+    sim.applyPending();
+    renderer.push(sim.drainEvents());
+    renderer.applyEditsNow();
+    renderer.render(sim, lastRs, 0, input.preview);
+    return;
+  }
+
   const ctx = audio.raw;
   const ct = ctx.currentTime;
+  clock.update(ct, now);
 
   // 遅れすぎたら基準を取り直し、飛ばした時間は捨てる（D8-1）
   let target = Math.floor((ct - t0 + LOOKAHEAD) * HZ);
@@ -581,8 +605,9 @@ function frame(now: number): void {
   renderer.push(kept);
   midi.update();
 
-  let rs = (audibleTime(ctx) - t0) * HZ + (params.visualOffsetMs / 1000) * HZ;
+  let rs = (clock.audible() - t0) * HZ + (params.visualOffsetMs / 1000) * HZ;
   rs = Math.min(sim.step - 1, Math.max(sim.step - HISTORY + 2, rs));
+  lastRs = rs;
   renderer.render(sim, rs, dt, input.preview);
 }
 requestAnimationFrame(frame);
