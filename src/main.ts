@@ -1,9 +1,10 @@
 import GUI from 'lil-gui';
 import { Audio } from './audio/audio';
-import { Input } from './input/input';
+import { Input, TOOLS, type Tool } from './input/input';
 import { Midi } from './midi/midi';
 import { Renderer } from './render/render';
 import { HISTORY, HZ } from './sim/constants';
+import { midiAt } from './sim/music';
 import { Sim } from './sim/sim';
 import type { Command, DriftMode, SceneData, SimEvent } from './sim/types';
 import { decodeScene, encodeScene, SCENE_HASH_KEY, SCENE_STORAGE_KEY, sceneFromSim } from './scene/scene';
@@ -27,6 +28,10 @@ const params = {
   bpm: 90,
   pattern: '2 : 3',
   volume: -3,
+  muted: false,
+  tool: 'line' as Tool,
+  pad: true,
+  padLevel: 0.5,
   rotate: false,
   rotationSpeed: 0.3,
   drift: 'drift' as DriftMode,
@@ -98,11 +103,28 @@ const input = new Input(
   renderer.canvas,
   sim,
   (x, y) => renderer.toWorld(x, y),
-  (x, y) => renderer.pickSegment(x, y),
+  (x, y) => renderer.pickShape(x, y),
 );
+// ドラッグ中に音程が変わったら小さく鳴らす（D11）。音高は今の区間のもの
+input.onPreviewNote = (slot) => {
+  if (started && !params.muted && params.internalSound) audio.tick(midiAt(slot, sim.sectionAt(sim.step)));
+};
+const setTool = (t: Tool) => {
+  params.tool = t;
+  input.setTool(t);
+  toolCtrl.updateDisplay();
+};
 
 // ---- GUI ----
 const gui = new GUI({ title: 'otosu' });
+const toolCtrl = gui.add(params, 'tool', [...TOOLS]).name('tool (1-5, Shift = bumper)').onChange(setTool);
+const muteCtrl = gui.add({ mute: () => toggleMute() }, 'mute').name('🔊 mute (M)');
+function toggleMute(): void {
+  params.muted = !params.muted;
+  audio.setMuted(params.muted);
+  if (params.muted) midi.allNotesOff();
+  muteCtrl.name(params.muted ? '🔇 unmute (M)' : '🔊 mute (M)');
+}
 const setTempo = () => {
   // 録音中にテンポや周期を変えると小節線が崩れるので、そこまでを保存して止める（D10）
   if (midi.isRecording) toggleRecording();
@@ -116,6 +138,8 @@ music.add(params, 'bpm', 60, 140, 1).onFinishChange(setTempo);
 music.add(params, 'pattern', Object.keys(PATTERNS)).onChange(setTempo);
 music.add(params, 'volume', -30, 0, 1).onChange((v: number) => started && audio.setVolume(v));
 music.add(params, 'stereoWidth', 0, 1, 0.05).onChange((v: number) => started && audio.setStereoWidth(v));
+music.add(params, 'pad').onChange((on: boolean) => started && audio.setPad(on));
+music.add(params, 'padLevel', 0, 1, 0.01).name('pad level').onChange((v: number) => started && audio.setPadLevel(v));
 const motion = gui.addFolder('Motion');
 motion.add(params, 'rotate').onChange(setRotation);
 motion.add(params, 'rotationSpeed', 0.05, 1, 0.01).onFinishChange(setRotation);
@@ -193,6 +217,7 @@ function toggleRecording(): void {
 
 // ---- キー操作・カーソル ----
 addEventListener('keydown', (e) => {
+  if (e.target instanceof HTMLInputElement || e.metaKey || e.ctrlKey) return;
   if (e.key === 'f' || e.key === 'F') {
     if (document.fullscreenElement) void document.exitFullscreen();
     else void document.documentElement.requestFullscreen();
@@ -205,6 +230,10 @@ addEventListener('keydown', (e) => {
     toggleRecording();
   } else if (e.key === 's' || e.key === 'S') {
     void copySceneUrl();
+  } else if (e.key === 'm' || e.key === 'M') {
+    toggleMute();
+  } else if (e.key >= '1' && e.key <= String(TOOLS.length)) {
+    setTool(TOOLS[Number(e.key) - 1]!);
   }
 });
 let cursorTimer = 0;
@@ -224,6 +253,9 @@ overlay.addEventListener('pointerdown', async () => {
   await audio.start(params.bpm);
   audio.setVolume(params.volume);
   audio.setStereoWidth(params.stereoWidth);
+  audio.setPad(params.pad);
+  audio.setPadLevel(params.padLevel);
+  audio.setMuted(params.muted);
   const ctx = audio.raw;
   console.info(`[otosu] baseLatency=${ctx.baseLatency} outputLatency=${ctx.outputLatency}`);
   t0 = ctx.currentTime + 0.1;
@@ -274,12 +306,17 @@ function frame(now: number): void {
 
   const kept: SimEvent[] = [];
   for (const e of sim.drainEvents()) {
+    const time = t0 + e.step / HZ;
     if (e.kind === 'hit') {
-      const time = t0 + e.step / HZ;
       midi.record(e); // 録音は step 基準なので、遅れて捨てる衝突も入れる
       if (time < ct - LATE_DROP) continue; // 音も光も捨てる
       if (params.internalSound) audio.play(e, Math.max(time, ct));
-      midi.play(e, Math.max(time, ct), toPerf);
+      if (!params.muted) midi.play(e, Math.max(time, ct), toPerf);
+    } else if (e.kind === 'section') {
+      audio.setSection(e.section, Math.max(time, ct));
+    } else if (e.kind === 'shapeAdded') {
+      // 確定音（D11: 入力へのフィードバック。MIDI には送らない）
+      if (params.internalSound && time >= ct - LATE_DROP) audio.confirm(e.midi, Math.max(time, ct));
     }
     kept.push(e);
   }
@@ -292,7 +329,7 @@ function frame(now: number): void {
 }
 requestAnimationFrame(frame);
 
-if (import.meta.env.DEV) Object.assign(window, { otosu: { sim, audio, params, midi } });
+if (import.meta.env.DEV) Object.assign(window, { otosu: { sim, audio, params, midi, renderer } });
 
 // ---- 配置の自動保存と URL 共有 ----
 function currentSceneCode(): string {

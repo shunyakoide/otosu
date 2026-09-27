@@ -29,6 +29,19 @@ export const BALL_LINE_COOLDOWN = 8;
 export const LINE_COOLDOWN = 7;
 
 export const MAX_BALLS = 200;
+/** 全図形の辺の合計の上限（超える図形は追加しない） */
+export const MAX_SEGS = 400;
+/** 1つの図形の辺の上限（ペンは 48、円は 24） */
+export const MAX_SHAPE_EDGES = 64;
+
+/** バンパー（D13）: 反発係数と、反射後の速さの上限 */
+export const BUMPER_RESTITUTION = 1.2;
+export const BUMPER_MAX_SPEED = Math.round(Math.sqrt(2 * G * WORLD_H));
+
+/** chain: 直前の衝突からこのステップ数以内に別の図形に当たると連鎖 */
+export const CHAIN_WINDOW = 120;
+/** energy: 直近 2 小節の衝突数をこの数で割って 0..1 */
+export const ENERGY_HITS = 24;
 export const MAX_AGE_STEPS = HZ * 20;
 export const STALL_SPEED = 5;
 export const STALL_STEPS = HZ;

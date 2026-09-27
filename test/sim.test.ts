@@ -2,9 +2,11 @@ import { describe, expect, it } from 'vitest';
 import { driftOffset, hitAllowed, segmentAngle, Sim } from '../src/sim/sim';
 import { lengthToNote, midiAt, PROG, sectionAt, sectionSteps } from '../src/sim/music';
 import { rayCapsule } from '../src/sim/collide';
-import { BALL_LINE_COOLDOWN, DRIFT_PERIOD, HZ, LINE_COOLDOWN, SECTION_BARS, V_MIN } from '../src/sim/constants';
+import {
+  BALL_LINE_COOLDOWN, BUMPER_MAX_SPEED, CHAIN_WINDOW, DRIFT_PERIOD, ENERGY_HITS, HZ, LINE_COOLDOWN, MAX_SEGS, SECTION_BARS, V_MIN,
+} from '../src/sim/constants';
 import { decodeScene, encodeScene, sceneFromSim, validateScene } from '../src/scene/scene';
-import type { DriftMode, HitEvent, SceneData, SimEvent } from '../src/sim/types';
+import type { DriftMode, HitEvent, SceneData, SceneDataV1, SimEvent } from '../src/sim/types';
 
 function setup(rotating = false, drift: DriftMode = 'off'): Sim {
   const sim = new Sim({ bpm: 90, pattern: [2, 3], drift: { mode: drift, amp: 24 } });
@@ -109,21 +111,21 @@ describe('rotation (B1, B2, B6)', () => {
       expect(seg.bx).toBeCloseTo(seg.cx + Math.cos(th) * seg.halfLen, 9);
       expect(seg.by).toBeCloseTo(seg.cy + Math.sin(th) * seg.halfLen, 9);
     }
-    const poses = events.filter((e) => e.kind === 'segmentPose');
-    expect(poses.length).toBe(sim.segments.length);
+    const poses = events.filter((e) => e.kind === 'shapePose');
+    expect(poses.length).toBe(sim.shapes.size);
     for (const p of poses) {
-      expect(p.kind === 'segmentPose' && p.omega).toBe(0);
+      expect(p.kind === 'shapePose' && p.omega).toBe(0);
       expect(p.step).toBe(500);
     }
   });
 
-  it('segmentAdded carries a copy, not the live object', () => {
+  it('shapeAdded carries a copy, not the live object', () => {
     const sim = new Sim({ bpm: 90, pattern: [2] });
     sim.enqueue({ kind: 'addSegment', ax: 700, ay: 300, bx: 1000, by: 380 });
-    const [added] = run(sim, 1).filter((e) => e.kind === 'segmentAdded');
+    const [added] = run(sim, 1).filter((e) => e.kind === 'shapeAdded');
     sim.enqueue({ kind: 'setRotation', on: true, speed: 0.4 });
     run(sim, 10);
-    expect(added!.kind === 'segmentAdded' && added!.segment.omega).toBe(0);
+    expect(added!.kind === 'shapeAdded' && added!.segments[0]!.omega).toBe(0);
   });
 
   it('uses the explicit dir for rotation direction', () => {
@@ -238,19 +240,198 @@ describe('harmony', () => {
   });
 });
 
-describe('scene (P2)', () => {
+function polygon(cx: number, cy: number, r: number, n: number, rot = 0): [number, number][] {
+  return Array.from({ length: n }, (_, i) => {
+    const a = rot + (i / n) * Math.PI * 2;
+    return [cx + r * Math.cos(a), cy + r * Math.sin(a)] as [number, number];
+  });
+}
+
+describe('shapes (D12)', () => {
+  it('uses one note per shape from its perimeter, and hits carry group/segKind', () => {
+    const sim = new Sim({ bpm: 90, pattern: [2], drift: { mode: 'off', amp: 0 } });
+    const sq: [number, number][] = [[910, 500], [1010, 500], [1010, 600], [910, 600]];
+    sim.enqueue({ kind: 'addShape', points: sq, closed: true, segKind: 'line' });
+    const events = run(sim, 600);
+    const added = events.find((e) => e.kind === 'shapeAdded')!;
+    expect(added.kind === 'shapeAdded' && added.segments.length).toBe(4);
+    const note = lengthToNote(400).index;
+    expect(sim.segments.every((s) => s.note === note && s.group === sim.segments[0]!.group)).toBe(true);
+    expect(added.kind === 'shapeAdded' && [added.gx, added.gy, added.note]).toEqual([960, 550, note]);
+    const hits = hitsOf(events);
+    expect(hits.length).toBeGreaterThan(0);
+    for (const h of hits) {
+      expect(h.group).toBe(sim.segments[0]!.group);
+      expect(h.segKind).toBe('line');
+      expect(h.note).toBe(note);
+    }
+  });
+
+  it('rotates the whole shape around its centroid', () => {
+    const sim = new Sim({ bpm: 90, pattern: [2] });
+    sim.enqueue({ kind: 'addShape', points: polygon(960, 540, 100, 3), closed: true, segKind: 'line' });
+    sim.enqueue({ kind: 'setRotation', on: true, speed: 0.5 });
+    run(sim, 1);
+    const before = sim.segments.map((s) => [s.ax, s.ay]);
+    run(sim, 240);
+    const sh = [...sim.shapes.values()][0]!;
+    for (const s of sim.segments) expect(Math.hypot(s.ax - sh.gx, s.ay - sh.gy)).toBeCloseTo(sh.radius, 0);
+    expect(sim.segments.map((s) => [s.ax, s.ay])).not.toEqual(before);
+    // 辺どうしはつながったまま
+    for (let i = 0; i < 3; i++) {
+      const a = sim.segments[i]!;
+      const b = sim.segments[(i + 1) % 3]!;
+      expect(a.bx).toBeCloseTo(b.ax, 9);
+      expect(a.by).toBeCloseTo(b.ay, 9);
+    }
+  });
+
+  it('sounds only once when a ball hits a corner (two edges of the same shape)', () => {
+    const sim = new Sim({ bpm: 90, pattern: [2], drift: { mode: 'off', amp: 0 } });
+    // 放出口（x=960）の真下に頂点
+    sim.enqueue({ kind: 'addShape', points: [[900, 560], [960, 500], [1020, 560]], closed: true, segKind: 'line' });
+    const hits = hitsOf(run(sim, 160));
+    expect(hits.length).toBeGreaterThan(0);
+    const first = hits[0]!;
+    expect(hits.filter((h) => h.step - first.step < LINE_COOLDOWN).length).toBe(1);
+  });
+
+  it('removeSegment removes the whole shape', () => {
+    const sim = new Sim({ bpm: 90, pattern: [2] });
+    sim.enqueue({ kind: 'addShape', points: polygon(500, 500, 80, 4), closed: true, segKind: 'line' });
+    sim.enqueue({ kind: 'addSegment', ax: 100, ay: 900, bx: 400, by: 900 });
+    run(sim, 1);
+    const g = sim.segments[2]!.group;
+    sim.enqueue({ kind: 'removeSegment', id: sim.segments[2]!.id });
+    const ev = run(sim, 1);
+    expect(ev.filter((e) => e.kind === 'shapeRemoved')).toEqual([{ kind: 'shapeRemoved', step: 1, group: g }]);
+    expect(sim.segments.length).toBe(1);
+    expect(sim.shapes.size).toBe(1);
+  });
+
+  it('does not add a shape that would exceed MAX_SEGS', () => {
+    const sim = new Sim({ bpm: 90, pattern: [2] });
+    for (let i = 0; i < 17; i++) {
+      sim.enqueue({ kind: 'addShape', points: polygon(100 + i * 100, 500, 40, 24), closed: true, segKind: 'line' });
+    }
+    run(sim, 1);
+    expect(sim.shapes.size).toBe(16);
+    expect(sim.segments.length).toBe(16 * 24);
+    expect(sim.segments.length).toBeLessThanOrEqual(MAX_SEGS);
+  });
+
+  it('rejects degenerate shapes', () => {
+    const sim = new Sim({ bpm: 90, pattern: [2] });
+    sim.enqueue({ kind: 'addShape', points: [[10, 10], [10, 10]], closed: false, segKind: 'line' });
+    sim.enqueue({ kind: 'addShape', points: [[10, 10], [60, 10]], closed: true, segKind: 'line' });
+    sim.enqueue({ kind: 'addShape', points: [[10, 10], [30, 10]], closed: false, segKind: 'line' });
+    run(sim, 1);
+    expect(sim.shapes.size).toBe(0);
+  });
+});
+
+describe('bumper (D13)', () => {
+  const bounceSeq = (kind: 'line' | 'bumper') => {
+    const sim = new Sim({ bpm: 90, pattern: [8], drift: { mode: 'off', amp: 0 } });
+    sim.enqueue({ kind: 'addShape', points: [[760, 700], [1160, 700]], closed: false, segKind: kind });
+    return hitsOf(run(sim, 120 * 12)).filter((h) => h.ballId === 1).map((h) => h.normalSpeed);
+  };
+
+  it('bounces higher than it fell, up to the speed cap', () => {
+    const b = bounceSeq('bumper');
+    expect(b.length).toBeGreaterThanOrEqual(3);
+    expect(b[1]!).toBeGreaterThan(b[0]!);
+    expect(b[2]!).toBeGreaterThanOrEqual(b[1]! - 20);
+    for (const v of b) expect(v).toBeLessThanOrEqual(BUMPER_MAX_SPEED + 20);
+    const l = bounceSeq('line');
+    expect(l[1]!).toBeLessThan(l[0]!);
+  });
+
+  it('bounds the energy: a bumper never launches faster than the cap', () => {
+    const sim = new Sim({ bpm: 90, pattern: [1], drift: { mode: 'off', amp: 0 } });
+    sim.enqueue({ kind: 'addShape', points: [[700, 900], [1220, 900]], closed: false, segKind: 'bumper' });
+    sim.enqueue({ kind: 'addShape', points: [[700, 300], [1000, 360]], closed: false, segKind: 'bumper' });
+    for (let i = 0; i < 120 * 10; i++) {
+      sim.advance();
+      // 力学的エネルギー v²/2 − G·y（y 下向き）はバンパーでしか増えず、そこで速さが上限に抑えられる
+      // → 一番高いバンパー（y ≥ 290）で上限の速さのときを超えない（離散化の誤差ぶん少し余裕を見る）
+      const limit = (BUMPER_MAX_SPEED * BUMPER_MAX_SPEED) / 2 - 1400 * 290;
+      for (const b of sim.balls) expect((b.vx * b.vx + b.vy * b.vy) / 2 - 1400 * b.y).toBeLessThanOrEqual(limit * 1.02 + 20000);
+    }
+  });
+});
+
+describe('chain / energy / section (D14)', () => {
+  const stairs = () => {
+    const sim = new Sim({ bpm: 90, pattern: [2, 3], drift: { mode: 'drift', amp: 24 } });
+    sim.enqueue({ kind: 'addShape', points: [[850, 300], [1100, 360]], closed: false, segKind: 'line' });
+    sim.enqueue({ kind: 'addShape', points: [[1050, 520], [800, 600]], closed: false, segKind: 'bumper' });
+    sim.enqueue({ kind: 'addShape', points: polygon(900, 800, 60, 24), closed: true, segKind: 'line' });
+    sim.enqueue({ kind: 'addShape', points: [[600, 950], [700, 900], [800, 960], [900, 930], [1000, 990]], closed: false, segKind: 'line' });
+    sim.enqueue({ kind: 'setRotation', on: true, speed: 0.3 });
+    return sim;
+  };
+
+  it('is deterministic: same commands → same event stream', () => {
+    const a = JSON.stringify(run(stairs(), 6000));
+    const b = JSON.stringify(run(stairs(), 6000));
+    expect(a).toBe(b);
+  });
+
+  it('counts chains across different shapes within the window', () => {
+    const hits = hitsOf(run(stairs(), 6000));
+    expect(Math.max(...hits.map((h) => h.chain))).toBeGreaterThanOrEqual(2);
+    const last = new Map<number, HitEvent>();
+    for (const h of hits) {
+      const p = last.get(h.ballId);
+      const expected = p && h.step - p.step <= CHAIN_WINDOW && p.group !== h.group ? p.chain + 1 : 1;
+      expect(h.chain).toBe(expected);
+      last.set(h.ballId, h);
+    }
+  });
+
+  it('computes energy from the hits in the last 2 bars', () => {
+    const sim = stairs();
+    const hits = hitsOf(run(sim, 6000));
+    const W = sim.energyWindow;
+    expect(W).toBe(640);
+    hits.forEach((h, i) => {
+      const n = hits.slice(0, i + 1).filter((x) => x.step > h.step - W).length;
+      expect(h.energy).toBeCloseTo(Math.min(1, n / ENERGY_HITS), 12);
+    });
+  });
+
+  it('emits section events at start and on each change', () => {
+    const ev = run(new Sim({ bpm: 90, pattern: [2] }), 2560 * 2 + 1).filter((e) => e.kind === 'section');
+    expect(ev).toEqual([
+      { kind: 'section', step: 0, section: 0 },
+      { kind: 'section', step: 2560, section: 1 },
+      { kind: 'section', step: 5120, section: 2 },
+    ]);
+  });
+
+  it('shapeAdded carries the midi of the section at that step', () => {
+    const sim = new Sim({ bpm: 90, pattern: [2] });
+    run(sim, 2600);
+    sim.enqueue({ kind: 'addShape', points: polygon(500, 500, 80, 4), closed: true, segKind: 'line' });
+    const added = run(sim, 1).find((e) => e.kind === 'shapeAdded')!;
+    expect(added.kind === 'shapeAdded' && added.midi).toBe(midiAt(added.kind === 'shapeAdded' ? added.note : 0, 1));
+  });
+});
+
+describe('scene (P2 / v2)', () => {
   const scene: SceneData = {
-    v: 1,
+    v: 2,
     bpm: 96,
     pattern: [2, 3],
     rotate: true,
     rotationSpeed: 0.35,
     drift: { mode: 'phrase', amp: 30 },
-    segs: [
-      [700, 300, 1000, 380, 1],
-      [1100, 420, 1300, 360, -1],
-      [600, 700, 1300, 760, 1],
-      [850, 950, 950, 900, 1],
+    shapes: [
+      ['line', 1, false, 700, 300, 1000, 380],
+      ['bumper', -1, false, 1100, 420, 1300, 360],
+      ['line', 1, true, 900, 700, 1000, 700, 950, 620],
+      ['line', -1, false, 600, 900, 700, 860, 800, 910, 900, 880],
     ],
   };
 
@@ -260,17 +441,45 @@ describe('scene (P2)', () => {
     expect(decodeScene(code)).toEqual(scene);
   });
 
+  it('reads v1 and converts it to v2 lines', () => {
+    const v1: SceneDataV1 = {
+      v: 1, bpm: 90, pattern: [2, 3], rotate: false, rotationSpeed: 0.3, drift: { mode: 'drift', amp: 24 },
+      segs: [[700, 300, 1000, 380, 1], [1100, 420, 1300, 360, -1], [0, 0, 10, 0, 1]],
+    };
+    const code = encodeScene(v1 as unknown as SceneData);
+    expect(decodeScene(code)).toEqual({
+      ...v1,
+      v: 2,
+      segs: undefined,
+      shapes: [['line', 1, false, 700, 300, 1000, 380], ['line', -1, false, 1100, 420, 1300, 360]],
+    } as unknown as SceneData);
+    // v1 を読み込んだ sim は、同じ線を addSegment した sim と同じ音を出す
+    const a = new Sim({ bpm: 90, pattern: [2, 3] });
+    a.enqueue({ kind: 'loadScene', scene: decodeScene(code)! });
+    const b = new Sim({ bpm: 90, pattern: [2, 3] });
+    b.enqueue({ kind: 'addSegment', ax: 700, ay: 300, bx: 1000, by: 380, dir: 1 });
+    b.enqueue({ kind: 'addSegment', ax: 1100, ay: 420, bx: 1300, by: 360, dir: -1 });
+    const key = (hs: HitEvent[]) => hs.map((h) => `${h.step}/${h.midi}/${h.normalSpeed}`);
+    expect(key(hitsOf(run(a, 3000)))).toEqual(key(hitsOf(run(b, 3000))));
+  });
+
   it('rejects broken input and sanitizes values', () => {
     expect(decodeScene('')).toBeNull();
     expect(decodeScene('!!!')).toBeNull();
     expect(decodeScene('abc')).toBeNull();
-    expect(validateScene({ ...scene, v: 2 })).toBeNull();
+    expect(validateScene({ ...scene, v: 3 })).toBeNull();
     expect(validateScene({ ...scene, pattern: [] })).toBeNull();
     expect(validateScene({ ...scene, drift: { mode: 'x', amp: 1 } })).toBeNull();
-    expect(validateScene({ ...scene, segs: [[1, 2, 3, 4, 0]] })).toBeNull();
-    const s = validateScene({ ...scene, drift: { mode: 'drift', amp: 999 }, segs: [[0, 0, 10, 0, 1], [-50, 10.4, 500, 10, 1]] })!;
+    expect(validateScene({ ...scene, shapes: [['arc', 1, false, 0, 0, 100, 0]] })).toBeNull();
+    expect(validateScene({ ...scene, shapes: [['line', 0, false, 0, 0, 100, 0]] })).toBeNull();
+    expect(validateScene({ ...scene, shapes: [['line', 1, false, 0, 0, 100]] })).toBeNull();
+    const s = validateScene({
+      ...scene,
+      drift: { mode: 'drift', amp: 999 },
+      shapes: [['line', 1, false, 0, 0, 10, 0], ['line', 1, false, -50, 10.4, 500, 10], ['line', 1, true, 5, 5, 200, 5, 100, 100, 5, 5]],
+    })!;
     expect(s.drift.amp).toBe(80);
-    expect(s.segs).toEqual([[0, 10, 500, 10, 1]]);
+    expect(s.shapes).toEqual([['line', 1, false, 0, 10, 500, 10], ['line', 1, true, 5, 5, 200, 5, 100, 100]]);
   });
 
   it('sceneFromSim returns the drawn coordinates, even while rotating', () => {
@@ -295,7 +504,9 @@ describe('scene (P2)', () => {
 
     const key = (sim: Sim, from: number, hs: HitEvent[]) => {
       const ids = sim.segments.map((s) => s.id);
-      return hs.map((h) => `${h.step - from}/${ids.indexOf(h.lineId)}/${h.midi}/${h.normalSpeed.toFixed(9)}`);
+      return hs.map(
+        (h) => `${h.step - from}/${ids.indexOf(h.lineId)}/${h.midi}/${h.chain}/${h.energy}/${h.normalSpeed.toFixed(9)}`,
+      );
     };
     expect(ha.length).toBeGreaterThan(20);
     expect(key(b, at, hb)).toEqual(key(a, 0, ha));
