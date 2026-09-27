@@ -8,9 +8,18 @@ import { writeSmf, type SmfNote } from './smf';
 
 export type MidiParams = {
   channel: number;
+  /** 円（キック）と四角（木）を GM ドラムとして送るチャンネル（D19） */
+  drumChannel: number;
   noteLength: number;
   offsetMs: number;
 };
+
+/** GM ドラムの音番号（D19）。旋律として送る形は null */
+export function gmDrum(e: Pick<HitEvent, 'form' | 'note'>): number | null {
+  if (e.form === 'circle') return e.note < 5 ? 36 : e.note < 10 ? 45 : 48; // Kick / Low Tom / Hi-Mid Tom
+  if (e.form === 'square') return e.note < 8 ? 77 : 76; // Low / Hi Wood Block
+  return null;
+}
 
 type PendingOff = { at: number; key: number; note: number; channel: number; onAt: number };
 
@@ -64,15 +73,22 @@ export class Midi {
     return Math.min(127, Math.max(1, Math.round(e.velocity * 127)));
   }
 
+  /** 送るチャンネル（1〜16）と音番号 */
+  private route(e: HitEvent): { channel: number; note: number } {
+    const drum = gmDrum(e);
+    return drum === null ? { channel: this.params.channel, note: e.midi } : { channel: this.params.drumChannel, note: drum };
+  }
+
   /** 録音にだけ入れる（遅れて捨てた衝突も step 基準で正しい位置に記録できる） */
   record(e: HitEvent): void {
     if (!this.recording) return;
+    const { channel, note } = this.route(e);
     this.recNotes.push({
       time: (e.step - this.recStartStep) / HZ,
       duration: this.params.noteLength,
-      note: e.midi,
+      note,
       velocity: this.velocityOf(e),
-      channel: this.params.channel,
+      channel,
     });
   }
 
@@ -80,17 +96,18 @@ export class Midi {
   play(e: HitEvent, audioTime: number, toPerf: TimeMap): void {
     const out = this.output;
     if (!out) return;
-    const ch = (this.params.channel - 1) & 0x0f;
-    const key = (ch << 7) | e.midi;
+    const { channel, note } = this.route(e);
+    const ch = (channel - 1) & 0x0f;
+    const key = (ch << 7) | note;
     const at = Math.max(performance.now(), toPerf(audioTime) + this.params.offsetMs);
     const prev = this.lastOn.get(key);
     if (prev !== undefined && prev <= at) {
       // 同じ音が鳴っている最中の再発音: 直前で切ってから鳴らす
-      out.send([0x80 | ch, e.midi, 0], Math.max(performance.now(), at - 1));
+      out.send([0x80 | ch, note, 0], Math.max(performance.now(), at - 1));
     }
-    out.send([0x90 | ch, e.midi, this.velocityOf(e)], at);
+    out.send([0x90 | ch, note, this.velocityOf(e)], at);
     this.lastOn.set(key, at);
-    this.offs.push({ at: at + this.params.noteLength * 1000, key, note: e.midi, channel: ch, onAt: at });
+    this.offs.push({ at: at + this.params.noteLength * 1000, key, note, channel: ch, onAt: at });
   }
 
   /** 毎フレーム呼ぶ。期限の来た note off を送る（予約送信にすると、連打した新しい音まで切ってしまうため） */

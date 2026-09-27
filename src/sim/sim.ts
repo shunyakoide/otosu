@@ -5,9 +5,11 @@ import {
   MAX_SHAPE_EDGES, MIN_LINE_LEN, PHRASE_LEN, REST_VN, RESTITUTION, SECTION_BARS, STALL_SPEED, STALL_STEPS,
   TANGENT_KEEP, V_MIN, WORLD_H, WORLD_W, impactVelocity, maxOmega,
 } from './constants';
-import { lengthToNote, midiAt, sectionAt, sectionSteps } from './music';
+import { inferForm } from './form';
+import { formMidi, lengthToNote, sectionAt, sectionSteps } from './music';
 import type {
-  Ball, Command, DriftMode, Emitter, SceneData, SegKind, Segment, ShapeAddedEvent, SimEvent, Snapshot,
+  Ball, Command, DriftMode, Emitter, HitEvent, SceneData, SegKind, Segment, ShapeAddedEvent, ShapeForm, SimEvent,
+  Snapshot,
 } from './types';
 
 const MAX_BOUNCES_PER_STEP = 4;
@@ -69,6 +71,8 @@ export function driftOffset(mode: DriftMode, amp: number, emitterId: number, k: 
 export type Shape = {
   group: number;
   kind: SegKind;
+  /** 形（D16）。音色と、circle なら拍にそろえるか（D17） */
+  form: ShapeForm;
   dir: 1 | -1;
   closed: boolean;
   /** 描いたときの頂点（整数 px）。保存用 */
@@ -157,6 +161,11 @@ export class Sim {
   private lastSection = -1;
   /** energy 用: 直近の衝突イベントのステップ（古い順） */
   private recentHits: number[] = [];
+  /**
+   * circle の保留キック（D17）。group → 次の拍の頭で出す HitEvent（step = 拍のステップ、contactStep = 接触）。
+   * 1つの図形の保留は常に1つ（接触から次の拍までの接触はすべてその拍にまとまるため）。Map の挿入順で出すので決定論的
+   */
+  private pendingKicks = new Map<number, HitEvent>();
   private readonly history: Snapshot[] = [];
   private readonly hit: Hit = { t: 0, nx: 0, ny: 0 };
   private readonly near = { dist: 0, nx: 0, ny: 0 };
@@ -217,6 +226,7 @@ export class Sim {
     this.updatePoses(s);
     this.emit(s);
     this.integrate(s);
+    this.flushKicks(s);
     this.cull(s);
     this.record(s);
     this.step = s + 1;
@@ -230,10 +240,10 @@ export class Sim {
     for (const cmd of queue) {
       switch (cmd.kind) {
         case 'addSegment':
-          this.addShape(s, [[cmd.ax, cmd.ay], [cmd.bx, cmd.by]], false, 'line', cmd.dir);
+          this.addShape(s, [[cmd.ax, cmd.ay], [cmd.bx, cmd.by]], false, 'line', cmd.dir, 'line');
           break;
         case 'addShape':
-          this.addShape(s, cmd.points, cmd.closed, cmd.segKind, cmd.dir);
+          this.addShape(s, cmd.points, cmd.closed, cmd.segKind, cmd.dir, cmd.form);
           break;
         case 'removeSegment': {
           const g = this.groupOf(cmd.id);
@@ -272,6 +282,7 @@ export class Sim {
     let w = 0;
     for (const seg of this.segments) if (seg.group !== group) this.segments[w++] = seg;
     this.segments.length = w;
+    this.pendingKicks.delete(group); // 消えた図形の保留キックは鳴らさない（D17）
     this.events.push({ kind: 'shapeRemoved', step: s, group });
   }
 
@@ -279,6 +290,7 @@ export class Sim {
     for (const group of this.shapes.keys()) this.events.push({ kind: 'shapeRemoved', step: s, group });
     this.shapes.clear();
     this.segments.length = 0;
+    this.pendingKicks.clear();
   }
 
   private setTempo(s: number, bpm: number, pattern: readonly number[]): void {
@@ -289,6 +301,18 @@ export class Sim {
     this.pattern = [...pattern];
     this.sectionLen = sectionSteps(bpm, SECTION_BARS, HZ);
     this.setupEmitters(bpm, pattern, s);
+    // 保留キックは新しい拍の格子に取り直す: 接触ステップ以降の最初の新しい拍（格子は s から始まるので、
+    // s より前の接触はこのステップ s の頭で鳴る）。捨てずに鳴らすのは、叩いた音が消えないようにするため
+    for (const ev of this.pendingKicks.values()) ev.step = this.beatAtOrAfter(ev.contactStep);
+  }
+
+  /** 拍の格子 harmonyAnchor + round(k·HZ·60/bpm) のうち、c 以上で最初のステップ（D17。放出の格子と同じ式） */
+  beatAtOrAfter(c: number): number {
+    const a = this.harmonyAnchor;
+    const p = (HZ * 60) / this.bpm;
+    let k = Math.max(0, Math.floor((c - a) / p) - 1);
+    while (a + Math.round(k * p) < c) k++;
+    return a + Math.round(k * p);
   }
 
   private setDrift(mode: DriftMode, amp: number): void {
@@ -310,20 +334,24 @@ export class Sim {
     this.pattern = [...scene.pattern];
     this.sectionLen = sectionSteps(scene.bpm, SECTION_BARS, HZ);
     this.setupEmitters(scene.bpm, scene.pattern, s);
-    for (const [kind, dir, closed, ...flat] of scene.shapes) {
+    scene.shapes.forEach(([kind, dir, closed, ...flat], i) => {
       const pts: [number, number][] = [];
-      for (let i = 0; i + 1 < flat.length; i += 2) pts.push([flat[i]!, flat[i + 1]!]);
-      this.addShape(s, pts, closed, kind, dir);
-    }
+      for (let j = 0; j + 1 < flat.length; j += 2) pts.push([flat[j]!, flat[j + 1]!]);
+      // 形は forms から（無ければ addShape が点列から推定する。D18）
+      this.addShape(s, pts, closed, kind, dir, scene.forms?.[i]);
+    });
   }
 
   /** 図形を追加する。座標は整数 px に丸める（ライブと読み込み後で同じ状態にするため） */
   private addShape(
     s: number, raw: readonly (readonly [number, number])[], closed: boolean, kind: SegKind, dir?: 1 | -1,
+    formIn?: ShapeForm,
   ): void {
     const points = normalizePoints(raw, closed);
     if (!points) return;
     const n = points.length;
+    // 推定は正規化後の点数で行う（保存するのも正規化後の点なので、読み込み後も同じ形になる）
+    const form = formIn ?? inferForm(n, closed);
     const edges = closed ? n : n - 1;
     if (edges > MAX_SHAPE_EDGES || this.segments.length + edges > MAX_SEGS) return;
 
@@ -348,7 +376,7 @@ export class Sim {
     const group = this.nextGroupId++;
     const note = lengthToNote(perimeter).index;
     const shape: Shape = {
-      group, kind, closed, points, gx, gy, radius, perimeter, note,
+      group, kind, form, closed, points, gx, gy, radius, perimeter, note,
       dir: dir ?? (group % 2 === 0 ? 1 : -1),
       segs: [],
       theta0: 0,
@@ -387,8 +415,9 @@ export class Sim {
       step: s,
       group,
       segKind: kind,
+      form,
       note,
-      midi: midiAt(note, this.sectionAt(s)),
+      midi: formMidi(form, note, this.sectionAt(s)),
       closed,
       dir: shape.dir,
       gx, gy,
@@ -588,6 +617,17 @@ export class Sim {
     if (!hitAllowed(s, impact, last, sh.lastEventStep)) return true;
     sh.lastEventStep = s;
 
+    // circle（D17）: 同じ拍にすでに保留キックがあれば1つにまとめる（x, y, ballId, chain, energy は最初の接触のまま、
+    // velocity と normalSpeed は最大）。まとめた接触は鳴らないので chain・energy には数えない。クールダウンは接触で数える
+    if (sh.form === 'circle') {
+      const pend = this.pendingKicks.get(seg.group);
+      if (pend) {
+        pend.normalSpeed = Math.max(pend.normalSpeed, impact);
+        pend.velocity = Math.max(pend.velocity, impactVelocity(impact));
+        return true;
+      }
+    }
+
     // chain: 直前の衝突から CHAIN_WINDOW 以内に別の図形なら +1
     b.chain = s - b.lastEventStep <= CHAIN_WINDOW && b.lastEventGroup !== seg.group ? b.chain + 1 : 1;
     b.lastEventStep = s;
@@ -602,9 +642,10 @@ export class Sim {
     if (drop) hits.splice(0, drop);
 
     const section = this.sectionAt(s);
-    this.events.push({
+    const ev: HitEvent = {
       kind: 'hit',
       step: s,
+      contactStep: s,
       ballId: b.id,
       lineId: seg.id,
       x: b.x,
@@ -612,14 +653,38 @@ export class Sim {
       normalSpeed: impact,
       velocity: impactVelocity(impact),
       note: sh.note,
-      midi: midiAt(sh.note, section),
+      midi: formMidi(sh.form, sh.note, section),
       section,
       group: seg.group,
       segKind: seg.kind,
+      form: sh.form,
       chain: b.chain,
       energy: Math.min(1, hits.length / ENERGY_HITS),
-    });
+    };
+    if (sh.form !== 'circle') {
+      this.events.push(ev);
+      return true;
+    }
+    // circle（D17）: 跳ね返りはその場、鳴らすのは接触以降の最初の拍の頭（flushKicks）
+    ev.step = this.beatAtOrAfter(s);
+    this.pendingKicks.set(seg.group, ev);
     return true;
+  }
+
+  /**
+   * 拍の頭に来た保留キックを出す（integrate の後なので、ちょうど拍の頭の接触もこのステップで鳴る）。
+   * 区間と音高は鳴らすステップで決める。出すイベントの step はすべて s（drainEvents の順序は崩れない）
+   */
+  private flushKicks(s: number): void {
+    if (this.pendingKicks.size === 0) return;
+    for (const [group, ev] of this.pendingKicks) {
+      if (ev.step > s) continue;
+      ev.step = s;
+      ev.section = this.sectionAt(s);
+      ev.midi = formMidi(ev.form, ev.note, ev.section);
+      this.events.push(ev);
+      this.pendingKicks.delete(group);
+    }
   }
 
   /** CCD の取りこぼし（線を引いた直後、回転による掃引）の保険。音は鳴らさない */

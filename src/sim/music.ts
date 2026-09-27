@@ -66,3 +66,20 @@ export function midiAt(slot: number, section: number): number {
   const { degree, octave } = noteFromIndex(slot);
   return ROOT_MIDI + 12 * octave + PROG[section % PROG.length]![degree]!;
 }
+
+/** 各区間の根音（C 基準の音高クラス）: I–IV–I–V = C, F, C, G */
+export const SECTION_ROOT: readonly number[] = [0, 5, 0, 7];
+
+/**
+ * circle（キック）の音高（D16）。区間の根音にそろえ、図形が大きい（スロットが低い）ほど低いオクターブ。
+ * スロット 0–4 → C1 帯、5–9 → C2 帯、10–15 → C3 帯（タム寄り）
+ */
+export function kickMidi(slot: number, section: number): number {
+  const oct = slot < 5 ? 0 : slot < 10 ? 1 : 2;
+  return 24 + 12 * oct + SECTION_ROOT[section % SECTION_ROOT.length]!;
+}
+
+/** 形の音高: circle は kickMidi、それ以外は midiAt */
+export function formMidi(form: string, slot: number, section: number): number {
+  return form === 'circle' ? kickMidi(slot, section) : midiAt(slot, section);
+}

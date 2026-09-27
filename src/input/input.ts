@@ -159,7 +159,7 @@ export class Input {
     const { points, closed } = this.shape;
     if (points.length < 2 || this.preview.perimeter < MIN_LINE_LEN) return;
     const segKind = e.shiftKey ? 'bumper' : 'line';
-    this.sim.enqueue({ kind: 'addShape', points: points.map(([x, y]) => [x, y]), closed, segKind });
+    this.sim.enqueue({ kind: 'addShape', points: points.map(([x, y]) => [x, y]), closed, segKind, form: this.tool });
   }
 
   /** 現在のツールで図形を作り直し、プレビューに反映する */

@@ -47,6 +47,7 @@ const params = {
   internalSound: true,
   midiOutput: '',
   midiChannel: 1,
+  midiDrumChannel: 10,
   midiNoteLength: 0.4,
   midiOffsetMs: 0,
 };
@@ -159,6 +160,7 @@ gui.add({ copy: () => void copySceneUrl() }, 'copy').name('copy scene URL (S)');
 const midiFolder = gui.addFolder('MIDI');
 const midi = new Midi({
   get channel() { return params.midiChannel; },
+  get drumChannel() { return params.midiDrumChannel; },
   get noteLength() { return params.midiNoteLength; },
   get offsetMs() { return params.midiOffsetMs; },
 });
@@ -184,6 +186,7 @@ const midiActions = {
 };
 const connectCtrl = midiFolder.add(midiActions, 'connect').name('connect MIDI');
 midiFolder.add(params, 'midiChannel', 1, 16, 1).name('channel').onChange(() => midi.allNotesOff());
+midiFolder.add(params, 'midiDrumChannel', 1, 16, 1).name('drum channel (○ □)').onChange(() => midi.allNotesOff());
 midiFolder.add(params, 'midiNoteLength', 0.05, 2, 0.05).name('note length (s)');
 midiFolder.add(params, 'midiOffsetMs', -100, 200, 1).name('offset (ms)');
 const recordCtrl = midiFolder.add(midiActions, 'record').name('● record .mid (R)');
@@ -316,7 +319,7 @@ function frame(now: number): void {
       audio.setSection(e.section, Math.max(time, ct));
     } else if (e.kind === 'shapeAdded') {
       // 確定音（D11: 入力へのフィードバック。MIDI には送らない）
-      if (params.internalSound && time >= ct - LATE_DROP) audio.confirm(e.midi, Math.max(time, ct));
+      if (params.internalSound && time >= ct - LATE_DROP) audio.confirm(e.midi, Math.max(time, ct), e.form);
     }
     kept.push(e);
   }

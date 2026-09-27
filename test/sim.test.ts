@@ -1,12 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import { driftOffset, hitAllowed, segmentAngle, Sim } from '../src/sim/sim';
-import { lengthToNote, midiAt, PROG, sectionAt, sectionSteps } from '../src/sim/music';
+import { formMidi, kickMidi, lengthToNote, midiAt, PROG, sectionAt, sectionSteps } from '../src/sim/music';
+import { inferForm } from '../src/sim/form';
 import { rayCapsule } from '../src/sim/collide';
 import {
   BALL_LINE_COOLDOWN, BUMPER_MAX_SPEED, CHAIN_WINDOW, DRIFT_PERIOD, ENERGY_HITS, HZ, LINE_COOLDOWN, MAX_SEGS, SECTION_BARS, V_MIN,
 } from '../src/sim/constants';
 import { decodeScene, encodeScene, sceneFromSim, validateScene } from '../src/scene/scene';
-import type { DriftMode, HitEvent, SceneData, SceneDataV1, SimEvent } from '../src/sim/types';
+import type { DriftMode, HitEvent, SceneData, SceneDataV1, ShapeAddedEvent, ShapeForm, SimEvent } from '../src/sim/types';
 
 function setup(rotating = false, drift: DriftMode = 'off'): Sim {
   const sim = new Sim({ bpm: 90, pattern: [2, 3], drift: { mode: drift, amp: 24 } });
@@ -378,13 +379,16 @@ describe('chain / energy / section (D14)', () => {
     expect(a).toBe(b);
   });
 
+  // chain・energy は接触時に計算する（D17）ので、接触ステップ順に並べて確かめる
+  const byContact = (hs: HitEvent[]) => [...hs].sort((a, b) => a.contactStep - b.contactStep);
+
   it('counts chains across different shapes within the window', () => {
-    const hits = hitsOf(run(stairs(), 6000));
+    const hits = byContact(hitsOf(run(stairs(), 6000)));
     expect(Math.max(...hits.map((h) => h.chain))).toBeGreaterThanOrEqual(2);
     const last = new Map<number, HitEvent>();
     for (const h of hits) {
       const p = last.get(h.ballId);
-      const expected = p && h.step - p.step <= CHAIN_WINDOW && p.group !== h.group ? p.chain + 1 : 1;
+      const expected = p && h.contactStep - p.contactStep <= CHAIN_WINDOW && p.group !== h.group ? p.chain + 1 : 1;
       expect(h.chain).toBe(expected);
       last.set(h.ballId, h);
     }
@@ -395,10 +399,14 @@ describe('chain / energy / section (D14)', () => {
     const hits = hitsOf(run(sim, 6000));
     const W = sim.energyWindow;
     expect(W).toBe(640);
-    hits.forEach((h, i) => {
-      const n = hits.slice(0, i + 1).filter((x) => x.step > h.step - W).length;
-      expect(h.energy).toBeCloseTo(Math.min(1, n / ENERGY_HITS), 12);
-    });
+    for (const h of hits) {
+      // 同じ接触ステップの衝突は処理順しだいで数えるかが変わるので、その幅で確かめる
+      const c = h.contactStep;
+      const before = hits.filter((x) => x.contactStep > c - W && x.contactStep < c).length;
+      const same = hits.filter((x) => x.contactStep === c).length;
+      expect(h.energy * ENERGY_HITS).toBeGreaterThanOrEqual(Math.min(ENERGY_HITS, before + 1) - 1e-9);
+      expect(h.energy * ENERGY_HITS).toBeLessThanOrEqual(Math.min(ENERGY_HITS, before + same) + 1e-9);
+    }
   });
 
   it('emits section events at start and on each change', () => {
@@ -433,6 +441,7 @@ describe('scene (P2 / v2)', () => {
       ['line', 1, true, 900, 700, 1000, 700, 950, 620],
       ['line', -1, false, 600, 900, 700, 860, 800, 910, 900, 880],
     ],
+    forms: ['line', 'line', 'triangle', 'pen'],
   };
 
   it('round-trips through encode/decode', () => {
@@ -452,6 +461,7 @@ describe('scene (P2 / v2)', () => {
       v: 2,
       segs: undefined,
       shapes: [['line', 1, false, 700, 300, 1000, 380], ['line', -1, false, 1100, 420, 1300, 360]],
+      forms: ['line', 'line'],
     } as unknown as SceneData);
     // v1 を読み込んだ sim は、同じ線を addSegment した sim と同じ音を出す
     const a = new Sim({ bpm: 90, pattern: [2, 3] });
@@ -539,5 +549,172 @@ describe('emission timing (D10)', () => {
       for (const e of sim.drainEvents()) if (e.kind === 'emit') emits.push(e.step);
     }
     emits.forEach((step, k) => expect(Math.abs(step - (k * 2 * 7200) / 97)).toBeLessThanOrEqual(0.5));
+  });
+});
+
+describe('forms (D16)', () => {
+  it('infers the form from the normalized points, and an explicit form wins', () => {
+    expect(inferForm(2, false)).toBe('line');
+    expect(inferForm(5, false)).toBe('pen');
+    expect(inferForm(3, true)).toBe('triangle');
+    expect(inferForm(4, true)).toBe('square');
+    expect(inferForm(24, true)).toBe('circle');
+    expect(inferForm(7, true)).toBe('pen');
+
+    const sim = new Sim({ bpm: 90, pattern: [2] });
+    sim.enqueue({ kind: 'addSegment', ax: 100, ay: 100, bx: 300, by: 100 });
+    sim.enqueue({ kind: 'addShape', points: [[100, 200], [200, 250], [300, 200]], closed: false, segKind: 'line' });
+    sim.enqueue({ kind: 'addShape', points: polygon(500, 500, 60, 3), closed: true, segKind: 'line' });
+    sim.enqueue({ kind: 'addShape', points: polygon(700, 500, 60, 4), closed: true, segKind: 'line' });
+    sim.enqueue({ kind: 'addShape', points: polygon(900, 500, 60, 24), closed: true, segKind: 'bumper' });
+    // 形の指定は推定より優先（4点の閉じた図形でもペンで描いたならペン）
+    sim.enqueue({ kind: 'addShape', points: polygon(1100, 500, 60, 4), closed: true, segKind: 'line', form: 'pen' });
+    const added = run(sim, 1).filter((e): e is ShapeAddedEvent => e.kind === 'shapeAdded');
+    expect(added.map((e) => e.form)).toEqual(['line', 'pen', 'triangle', 'square', 'circle', 'pen']);
+    expect([...sim.shapes.values()].map((sh) => sh.form)).toEqual(added.map((e) => e.form));
+    for (const e of added) expect(e.midi).toBe(formMidi(e.form, e.note, 0));
+    expect(added[4]!.midi).toBe(kickMidi(added[4]!.note, 0));
+  });
+});
+
+describe('kick on the beat (D17)', () => {
+  /** 放出口の真下に円（または同じ点列を別の形で） */
+  const drum = (form: ShapeForm, pattern: number[] = [0.25], bpm = 90) => {
+    const sim = new Sim({ bpm, pattern, drift: { mode: 'off', amp: 0 } });
+    sim.enqueue({ kind: 'addShape', points: polygon(960, 700, 90, 24, 0.1), closed: true, segKind: 'line', form });
+    sim.enqueue({ kind: 'addShape', points: [[700, 980], [1220, 1000]], closed: false, segKind: 'bumper' });
+    return sim;
+  };
+  const circleGroup = 1;
+
+  it('sounds a circle hit on the first beat at or after the contact', () => {
+    const sim = drum('circle', [2]);
+    const events = run(sim, 120 * 20);
+    const kicks = hitsOf(events).filter((h) => h.group === circleGroup);
+    expect(kicks.length).toBeGreaterThan(5);
+    expect(kicks.some((h) => h.contactStep < h.step)).toBe(true);
+    for (const h of kicks) {
+      expect(h.form).toBe('circle');
+      expect(h.step % 80).toBe(0); // 90BPM → 1拍 80 ステップ、基準 0
+      expect(h.contactStep).toBeLessThanOrEqual(h.step);
+      expect(h.step - h.contactStep).toBeLessThan(80);
+      expect(h.step).toBe(sim.beatAtOrAfter(h.contactStep));
+      expect(h.section).toBe(sim.sectionAt(h.step));
+      expect(h.midi).toBe(kickMidi(h.note, h.section));
+    }
+    // circle 以外は接触ステップ = 鳴らすステップ
+    for (const h of hitsOf(events).filter((x) => x.group !== circleGroup)) expect(h.contactStep).toBe(h.step);
+    // イベント列の step は減らない（render / main が step で読み進めるため）
+    for (let i = 1; i < events.length; i++) expect(events[i]!.step).toBeGreaterThanOrEqual(events[i - 1]!.step);
+  });
+
+  it('merges hits within one beat into one kick (max velocity, first contact)', () => {
+    // 形は物理に影響しないので、同じ点列の pen は接触ごとの音を出す → 拍ごとにまとめたものと一致するはず
+    const a = drum('circle');
+    const kicks = hitsOf(run(a, 120 * 20)).filter((h) => h.group === circleGroup);
+    const b = drum('pen');
+    const raw = hitsOf(run(b, 120 * 20)).filter((h) => h.group === circleGroup);
+    const byBeat = new Map<number, HitEvent[]>();
+    for (const h of raw) {
+      const beat = b.beatAtOrAfter(h.contactStep);
+      if (beat >= 120 * 20) continue; // まだ鳴っていない
+      byBeat.set(beat, [...(byBeat.get(beat) ?? []), h]);
+    }
+    expect([...byBeat.values()].some((hs) => hs.length > 1)).toBe(true);
+    expect(kicks.map((k) => k.step)).toEqual([...byBeat.keys()]);
+    for (const k of kicks) {
+      const hs = byBeat.get(k.step)!;
+      const first = hs[0]!;
+      expect([k.contactStep, k.ballId, k.x, k.y, k.lineId]).toEqual([first.contactStep, first.ballId, first.x, first.y, first.lineId]);
+      expect(k.velocity).toBe(Math.max(...hs.map((h) => h.velocity)));
+      expect(k.normalSpeed).toBe(Math.max(...hs.map((h) => h.normalSpeed)));
+    }
+  });
+
+  /** 保留中（接触済み・拍の前）になるステップ: pen の双子で接触を探す */
+  const pendingAt = () => {
+    const twin = drum('pen', [2]);
+    const c = hitsOf(run(twin, 120 * 10)).find((h) => h.group === circleGroup && twin.beatAtOrAfter(h.contactStep) > h.contactStep + 1)!;
+    return c.contactStep;
+  };
+
+  it('drops the pending kick when the shape is removed or cleared', () => {
+    const c = pendingAt();
+    for (const cmd of [{ kind: 'removeShape', group: circleGroup }, { kind: 'clearSegments' }] as const) {
+      const sim = drum('circle', [2]);
+      run(sim, c + 1); // ステップ c まで実行済み（接触済み・未発音）
+      sim.enqueue(cmd);
+      const later = hitsOf(run(sim, 400)).filter((h) => h.group === circleGroup);
+      expect(later).toEqual([]);
+    }
+  });
+
+  it('re-snaps a pending kick to the new beat grid on setTempo', () => {
+    const c = pendingAt();
+    const sim = drum('circle', [2]);
+    run(sim, c + 1);
+    sim.enqueue({ kind: 'setTempo', bpm: 120, pattern: [2] });
+    const k = hitsOf(run(sim, 1)).filter((h) => h.group === circleGroup);
+    // 新しい格子はステップ c+1 から始まる → 保留はその頭で鳴る
+    expect(k.map((h) => [h.step, h.contactStep])).toEqual([[c + 1, c]]);
+  });
+
+  it('is deterministic, including after loadScene', () => {
+    const a = JSON.stringify(run(drum('circle'), 5000));
+    const b = JSON.stringify(run(drum('circle'), 5000));
+    expect(a).toBe(b);
+
+    const src = drum('circle');
+    run(src, 1);
+    const scene = sceneFromSim(src);
+    const x = new Sim({ bpm: 90, pattern: [2] });
+    x.enqueue({ kind: 'loadScene', scene });
+    const y = setup(true, 'drift');
+    run(y, 999);
+    const at = y.step;
+    y.enqueue({ kind: 'loadScene', scene });
+    const key = (from: number, hs: HitEvent[]) => hs.map((h) => `${h.step - from}/${h.contactStep - from}/${h.form}/${h.midi}/${h.velocity}`);
+    const hx = hitsOf(run(x, 3000));
+    expect(hx.some((h) => h.form === 'circle')).toBe(true);
+    expect(key(at, hitsOf(run(y, 3000)))).toEqual(key(0, hx));
+  });
+});
+
+describe('scene forms (D18)', () => {
+  const base = {
+    v: 2, bpm: 90, pattern: [2], rotate: false, rotationSpeed: 0.3, drift: { mode: 'off', amp: 0 },
+  } as const;
+  const tri = ['line', 1, true, 900, 700, 1000, 700, 950, 620] as const;
+  const seg = ['line', 1, false, 100, 100, 400, 100] as const;
+
+  it('round-trips forms through sceneFromSim / encode / loadScene', () => {
+    const sim = new Sim({ bpm: 90, pattern: [2] });
+    sim.enqueue({ kind: 'addShape', points: polygon(500, 500, 60, 4), closed: true, segKind: 'line', form: 'pen' });
+    sim.enqueue({ kind: 'addShape', points: polygon(800, 500, 60, 24), closed: true, segKind: 'line' });
+    sim.enqueue({ kind: 'addSegment', ax: 100, ay: 900, bx: 400, by: 900 });
+    run(sim, 1);
+    const scene = sceneFromSim(sim);
+    expect(scene.forms).toEqual(['pen', 'circle', 'line']);
+    const back = decodeScene(encodeScene(scene))!;
+    expect(back).toEqual(scene);
+    const re = new Sim({ bpm: 90, pattern: [2] });
+    re.enqueue({ kind: 'loadScene', scene: back });
+    const added = run(re, 1).filter((e): e is ShapeAddedEvent => e.kind === 'shapeAdded');
+    expect(added.map((e) => e.form)).toEqual(['pen', 'circle', 'line']);
+  });
+
+  it('infers forms for old scenes, wrong lengths and invalid entries', () => {
+    expect(validateScene({ ...base, shapes: [tri, seg] })!.forms).toEqual(['triangle', 'line']);
+    expect(validateScene({ ...base, shapes: [tri, seg], forms: ['circle'] })!.forms).toEqual(['triangle', 'line']);
+    expect(validateScene({ ...base, shapes: [tri, seg], forms: ['square', 'wave'] })!.forms).toEqual(['square', 'line']);
+    // 捨てられた図形の form も一緒に捨てる（順番がずれない）
+    const tiny = ['line', 1, false, 0, 0, 10, 0];
+    expect(validateScene({ ...base, shapes: [tiny, tri, seg], forms: ['circle', 'pen', 'square'] })!.forms).toEqual(['pen', 'square']);
+    // forms の無いシーンを読み込んでも鳴る
+    const sim = new Sim({ bpm: 90, pattern: [2] });
+    sim.enqueue({ kind: 'loadScene', scene: validateScene({ ...base, shapes: [tri] })! });
+    expect([...sim.shapes.values()].length).toBe(0);
+    run(sim, 1);
+    expect([...sim.shapes.values()].map((sh) => sh.form)).toEqual(['triangle']);
   });
 });

@@ -2,6 +2,13 @@
 export type SegKind = 'line' | 'bumper';
 
 /**
+ * 図形の形（描いたツール）。音色がこれで決まる（D16）。
+ * line = ベル、pen = はじく音、circle = キック（拍にそろえる）、triangle = 金属、square = 木・クリック
+ */
+export type ShapeForm = 'line' | 'pen' | 'circle' | 'triangle' | 'square';
+export const SHAPE_FORMS: readonly ShapeForm[] = ['line', 'pen', 'circle', 'triangle', 'square'];
+
+/**
  * 図形の1辺。図形 = 同じ group を持つ Segment の集まり（D12）。1本の線は辺が1つの図形。
  * 回転は図形の重心 (gx, gy) のまわり。辺の姿勢 = 重心 + R(φ)·(rax..rby)、φ は図形の回転角（描いたとき 0）。
  */
@@ -87,6 +94,8 @@ export type SceneData = {
   rotationSpeed: number;
   drift: { mode: DriftMode; amp: number };
   shapes: SceneShape[];
+  /** shapes と同じ順の形（D16）。無い・長さが合わない・不正な値の要素は点列から推定する（inferForm） */
+  forms?: ShapeForm[];
 };
 
 /** 旧形式（ステップ2・3）。読み込みのみ */
@@ -102,7 +111,8 @@ export type SceneDataV1 = {
 
 export type Command =
   | { kind: 'addSegment'; ax: number; ay: number; bx: number; by: number; dir?: 1 | -1 }
-  | { kind: 'addShape'; points: [number, number][]; closed: boolean; segKind: SegKind; dir?: 1 | -1 }
+  /** form を省略したら点列から推定する（inferForm） */
+  | { kind: 'addShape'; points: [number, number][]; closed: boolean; segKind: SegKind; dir?: 1 | -1; form?: ShapeForm }
   /** 辺 id を含む図形をまるごと消す */
   | { kind: 'removeSegment'; id: number }
   | { kind: 'removeShape'; group: number }
@@ -114,7 +124,10 @@ export type Command =
 
 export type HitEvent = {
   kind: 'hit';
+  /** 鳴らすステップ（音・光・MIDI・録音はすべてこの時刻）。circle は接触後の最初の拍の頭（D17） */
   step: number;
+  /** ボールが実際に当たったステップ（circle 以外は step と同じ） */
+  contactStep: number;
   ballId: number;
   lineId: number;
   x: number;
@@ -123,13 +136,14 @@ export type HitEvent = {
   velocity: number;
   /** 線に固定された音程スロット 0..15（色もこれで決まる） */
   note: number;
-  /** 実際に鳴らす音高。ハーモニーの区間で動く */
+  /** 実際に鳴らす音高。ハーモニーの区間で動く。circle は区間の根音（kickMidi） */
   midi: number;
   /** ハーモニー進行の区間番号 */
   section: number;
   /** 図形 id と種類 */
   group: number;
   segKind: SegKind;
+  form: ShapeForm;
   /** そのボールが直前の衝突から 120 ステップ以内に別の図形に当たったら +1、そうでなければ 1 */
   chain: number;
   /** 直近 2 小節の衝突数 / 24（0..1） */
@@ -141,8 +155,9 @@ export type ShapeAddedEvent = {
   step: number;
   group: number;
   segKind: SegKind;
+  form: ShapeForm;
   note: number;
-  /** 追加したステップの区間での音高（確定音用） */
+  /** 追加したステップの区間での音高（確定音用。circle は kickMidi） */
   midi: number;
   closed: boolean;
   dir: 1 | -1;

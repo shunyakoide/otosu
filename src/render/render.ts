@@ -11,7 +11,7 @@ import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { closestOnSegment } from '../sim/collide';
 import { BALL_RADIUS, HZ, LINE_WIDTH, MAX_BALLS, MIN_LINE_LEN, WORLD_H, WORLD_W } from '../sim/constants';
 import { lengthToNote } from '../sim/music';
-import type { SegKind, ShapeAddedEvent, SimEvent, Snapshot } from '../sim/types';
+import type { SegKind, ShapeAddedEvent, ShapeForm, SimEvent, Snapshot } from '../sim/types';
 import { GRAY, noteColor, OFF_WHITE, type ColorMode } from './palette';
 
 // 描画は「renderStep 時点の世界」を表示する（decisions.md D3, D8-5）。
@@ -78,14 +78,62 @@ const EMITTER_TAU = 0.2;
 const BUMPER_OFFSET = 2.5;
 const BUMPER_WIDTH = 2;
 
-type BallLook = { note: number; step: number; v: number; chain: number };
-type Ripple = { x: number; y: number; step: number; v: number; note: number };
+// 形ごとの光（D16）。音と光は 1:1: 光るのは HitEvent の step（circle は拍の頭）だけ
+// circle（キック）: 図形全体が脈打つ（速い立ち上がり → 減衰）＋重心から輪が広がる。大きい円ほどゆっくり大きく
+const KICK_ATTACK = 0.015;
+/** 脈の減衰の時定数: 小さい円 KICK_DECAY_MIN → 半径 KICK_BIG_R 以上で +KICK_DECAY_BIG */
+const KICK_DECAY_MIN = 0.3;
+const KICK_DECAY_BIG = 0.25;
+const KICK_BIG_R = 200;
+/** 脈のときの明るさの上乗せ（0.35 + 0.55v）· 包絡（最大 ~0.85） */
+const KICK_GAIN = 0.35;
+const KICK_GAIN_V = 0.55;
+/** 重心まわりの拡大（(0.5 + v) · KICK_SCALE · 包絡） */
+const KICK_SCALE = 0.03;
+/** 輪: 図形の半径から grow = KICK_RING_GROW + KICK_RING_GROW_K·半径 だけ広がる。長さ dur = KICK_RING_SEC + KICK_RING_SEC_BIG·(大きさ) */
+const KICK_RING_GROW = 20;
+const KICK_RING_GROW_K = 0.6;
+const KICK_RING_SEC = 0.7;
+const KICK_RING_SEC_BIG = 0.8;
+const KICK_RING_GAIN = 0.45;
+// triangle（金属）: 辺に沿って細かいきらめきが散り、長く残る
+const METAL_TAU = 2.5;
+/** 図形全体の長い余韻（控えめ） */
+const METAL_GLOW = 0.12;
+const MAX_GLINTS = 768;
+/** 1回の衝突のきらめきの数 = GLINT_BASE + GLINT_PER_V·v */
+const GLINT_BASE = 10;
+const GLINT_PER_V = 14;
+/** 半分は打点のまわり（周長 × ±GLINT_SPREAD）、残りは周全体に */
+const GLINT_SPREAD = 0.12;
+/** 出てくるまでの遅れ（最大、秒）: 散らばって順に灯る */
+const GLINT_STAGGER = 0.9;
+const GLINT_TAU_MIN = 1.2;
+const GLINT_TAU_MAX = 2.8;
+/** 1粒の明るさの上限（小さい点なのでブルームで大きく滲まない程度） */
+const GLINT_GAIN = 1.0;
+/** 辺からの法線方向のずれ（±px） */
+const GLINT_JITTER = 2.5;
+// square（木）: 短く鋭い閃光、余韻ほぼなし。一瞬だけ外側に細い輪郭が弾ける
+const WOOD_FLASH = 0.045;
+const WOOD_TAU = 0.15;
+const WOOD_ECHO_SEC = 0.12;
+const WOOD_ECHO_GROW = 0.06;
+const WOOD_RIPPLE_SEC = 0.18;
+
+/** flash: 衝突の瞬間にボール自身が光る強さ（circle のキックは拍で図形が光るので 0） */
+type BallLook = { note: number; step: number; v: number; chain: number; flash: number };
+/** 波紋: 半径 r0 から grow だけ dur 秒で広がる。明るさ gain·(1−p)² */
+type Ripple = { x: number; y: number; step: number; note: number; r0: number; grow: number; dur: number; gain: number };
 type Hit = { step: number; v: number; s: number; tau: number };
 type Shape = {
   group: number;
   kind: SegKind;
+  form: ShapeForm;
   note: number;
   closed: boolean;
+  /** 重心から頂点までの平均距離（circle のキックの大きさ） */
+  radius: number;
   gx: number;
   gy: number;
   /** 重心からの相対頂点（φ = 0） */
@@ -183,6 +231,18 @@ const easeOutCubic = (p: number) => 1 - Math.pow(1 - p, 3);
 const shapeAngle = (s: Shape, step: number) => s.theta0 + (s.omega * (step - s.rotStartStep)) / HZ;
 /** 弦の余韻の時定数: 低音（note 0）ほど長い 1.5s → 高音（note 15）0.4s */
 const stringTau = (note: number) => 1.5 - (1.1 * Math.min(15, Math.max(0, note))) / 15;
+/** 円の大きさ 0..1 */
+const kickSize = (r: number) => Math.min(1, Math.max(0, r / KICK_BIG_R));
+/** 見た目だけに使う決定論的な乱数 [0, 1)（ステップ・図形・番号から） */
+function hash01(a: number, b: number, c: number): number {
+  let h = Math.imul(a | 0, 0x9e3779b1) ^ Math.imul((b | 0) + 0x7f4a7c15, 0x85ebca6b) ^ Math.imul((c | 0) + 0x165667b1, 0xc2b2ae35);
+  h ^= h >>> 15;
+  h = Math.imul(h, 0x2c1b3c6d);
+  h ^= h >>> 12;
+  h = Math.imul(h, 0x297a2d39);
+  h ^= h >>> 15;
+  return (h >>> 0) / 4294967296;
+}
 
 export class Renderer {
   readonly canvas: HTMLCanvasElement;
@@ -202,6 +262,21 @@ export class Renderer {
   private readonly caps = instanced(new CircleGeometry(1, 16), MAX_CAPS, 2);
   private readonly ripples = instanced(new RingGeometry(0.93, 1, 48), MAX_RIPPLES, 1);
   private readonly emitterMesh = instanced(new RingGeometry(0.6, 1, 32), MAX_EMITTERS, 1);
+  private readonly glints = instanced(new CircleGeometry(1, 8), MAX_GLINTS, 3);
+
+  // きらめき（triangle）のリングバッファ。gStep = Infinity は空き
+  private readonly gGroup = new Int32Array(MAX_GLINTS);
+  private readonly gStep = new Float64Array(MAX_GLINTS).fill(Infinity);
+  private readonly gArc = new Float32Array(MAX_GLINTS);
+  private readonly gDelay = new Float32Array(MAX_GLINTS);
+  private readonly gTau = new Float32Array(MAX_GLINTS);
+  private readonly gFreq = new Float32Array(MAX_GLINTS);
+  private readonly gPhase = new Float32Array(MAX_GLINTS);
+  private readonly gSize = new Float32Array(MAX_GLINTS);
+  private readonly gOff = new Float32Array(MAX_GLINTS);
+  private readonly gGain = new Float32Array(MAX_GLINTS);
+  private glintHead = 0;
+  private readonly pt = { x: 0, y: 0, nx: 0, ny: 0 };
 
   private readonly shapes = new Map<number, Shape>();
   private readonly dying = new Map<number, Dying>();
@@ -263,7 +338,7 @@ export class Renderer {
     this.composer.addPass(this.bloom);
     this.composer.addPass(new OutputPass());
 
-    this.scene.add(this.ripples, this.emitterMesh, this.trails, this.edges, this.caps, this.balls);
+    this.scene.add(this.ripples, this.emitterMesh, this.trails, this.edges, this.caps, this.glints, this.balls);
     this.resize();
     addEventListener('resize', () => this.resize());
   }
@@ -359,14 +434,103 @@ export class Renderer {
       elen[i] = Math.hypot(rel[j * 2]! - rel[i * 2]!, rel[j * 2 + 1]! - rel[i * 2 + 1]!);
       p += elen[i]!;
     }
-    this.shapes.set(e.group, {
-      group: e.group, kind: e.segKind, note: e.note, closed: e.closed, gx: e.gx, gy: e.gy,
+    let radius = 0;
+    for (let i = 0; i < n; i++) radius += Math.hypot(rel[i * 2]!, rel[i * 2 + 1]!);
+    radius = n > 0 ? radius / n : 0;
+    const shape: Shape = {
+      group: e.group, kind: e.segKind, form: e.form, note: e.note, closed: e.closed, radius, gx: e.gx, gy: e.gy,
       rel, n, s0, elen, perimeter: p,
       theta0: 0, rotStartStep: e.step, omega: 0,
-      // 置いた瞬間: 始点から光が走る
-      hit: { step: e.step, v: 0.5, s: 0, tau: stringTau(e.note) },
+      hit: null,
       resStep: -Infinity, resV: 0, replayAt: -Infinity,
-    });
+    };
+    this.shapes.set(e.group, shape);
+    // 置いた瞬間（確定音）: 形の光で鳴らす。line / pen は始点から光が走る
+    this.trigger(shape, e.step, 0.5, 0);
+  }
+
+  /** 図形を形の性格で光らせる（衝突・確定音の共通） */
+  private trigger(s: Shape, step: number, v: number, arc: number): void {
+    switch (s.form) {
+      case 'circle': {
+        const k = kickSize(s.radius);
+        s.hit = { step, v, s: 0, tau: KICK_DECAY_MIN + KICK_DECAY_BIG * k };
+        // 重心から広がる淡い輪（大きい円ほどゆっくり大きく）
+        this.pushRipple({
+          x: s.gx, y: s.gy, step, note: s.note, r0: s.radius,
+          grow: KICK_RING_GROW + KICK_RING_GROW_K * s.radius,
+          dur: KICK_RING_SEC + KICK_RING_SEC_BIG * k,
+          gain: KICK_RING_GAIN * (0.4 + v),
+        });
+        break;
+      }
+      case 'triangle':
+        s.hit = { step, v, s: arc, tau: METAL_TAU };
+        this.spawnGlints(s, step, v, arc);
+        break;
+      case 'square':
+        s.hit = { step, v, s: arc, tau: WOOD_TAU };
+        break;
+      default:
+        s.hit = { step, v, s: arc, tau: stringTau(s.note) };
+    }
+  }
+
+  private pushRipple(r: Ripple): void {
+    if (this.rippleBuf.length < MAX_RIPPLES) this.rippleBuf.push(r);
+    else this.rippleBuf[this.rippleHead] = r;
+    this.rippleHead = (this.rippleHead + 1) % MAX_RIPPLES;
+  }
+
+  /** きらめきを辺に散らす。位置・遅れ・瞬きはステップと図形からのハッシュで決まる */
+  private spawnGlints(s: Shape, step: number, v: number, arc: number): void {
+    if (s.perimeter <= 0) return;
+    const cnt = GLINT_BASE + Math.round(GLINT_PER_V * v);
+    for (let k = 0; k < cnt; k++) {
+      const i = this.glintHead;
+      this.glintHead = (this.glintHead + 1) % MAX_GLINTS;
+      const b = k * 8;
+      const near = (k & 1) === 0;
+      let a = near
+        ? arc + (hash01(step, s.group, b) - 0.5) * 2 * GLINT_SPREAD * s.perimeter
+        : hash01(step, s.group, b) * s.perimeter;
+      a %= s.perimeter;
+      if (a < 0) a += s.perimeter;
+      this.gGroup[i] = s.group;
+      this.gStep[i] = step;
+      this.gArc[i] = a;
+      this.gDelay[i] = hash01(step, s.group, b + 1) * GLINT_STAGGER * (near ? 0.3 : 1);
+      this.gTau[i] = GLINT_TAU_MIN + hash01(step, s.group, b + 2) * (GLINT_TAU_MAX - GLINT_TAU_MIN);
+      this.gFreq[i] = 2 + 7 * hash01(step, s.group, b + 3);
+      this.gPhase[i] = 2 * Math.PI * hash01(step, s.group, b + 4);
+      this.gSize[i] = 0.9 + 1.1 * hash01(step, s.group, b + 5);
+      this.gOff[i] = (hash01(step, s.group, b + 6) - 0.5) * 2 * GLINT_JITTER;
+      this.gGain[i] = GLINT_GAIN * (0.5 + 0.5 * v) * (0.6 + 0.4 * hash01(step, s.group, b + 7));
+    }
+  }
+
+  /** 周上の位置 arc の点と辺の法線（回転角 φ）を this.pt に書く */
+  private pointAt(s: Shape, phi: number, arc: number): void {
+    const ne = s.closed ? s.n : s.n - 1;
+    const o = this.pt;
+    if (ne <= 0) {
+      o.x = s.gx; o.y = s.gy; o.nx = 0; o.ny = 0;
+      return;
+    }
+    let i = 0;
+    while (i < ne - 1 && arc > s.s0[i]! + s.elen[i]!) i++;
+    const j = (i + 1) % s.n;
+    const el = s.elen[i]!;
+    const u = el > 0 ? Math.min(1, Math.max(0, (arc - s.s0[i]!) / el)) : 0;
+    const x0 = s.rel[i * 2]!, y0 = s.rel[i * 2 + 1]!;
+    const ex = s.rel[j * 2]! - x0, ey = s.rel[j * 2 + 1]! - y0;
+    const lx = x0 + u * ex, ly = y0 + u * ey;
+    const cs = Math.cos(phi), sn = Math.sin(phi);
+    o.x = s.gx + cs * lx - sn * ly;
+    o.y = s.gy + sn * lx + cs * ly;
+    const tx = el > 0 ? ex / el : 0, ty = el > 0 ? ey / el : 0;
+    o.nx = -(sn * tx + cs * ty);
+    o.ny = cs * tx - sn * ty;
   }
 
   /** 打点 (x, y) の周上の位置 */
@@ -392,7 +556,8 @@ export class Renderer {
 
   private onHit(e: Extract<SimEvent, { kind: 'hit' }>): void {
     const s = this.shapes.get(e.group);
-    if (s) s.hit = { step: e.step, v: e.velocity, s: this.arcPos(s, e.step, e.x, e.y), tau: stringTau(s.note) };
+    // circle は拍の頭で図形全体が光る（打点は使わない。ボールはもう離れている）
+    if (s) this.trigger(s, e.step, e.velocity, e.form === 'circle' ? 0 : this.arcPos(s, e.contactStep, e.x, e.y));
 
     // 共鳴: 同じスロットの他の図形がほのかに光る（D11）
     for (const o of this.shapes.values()) {
@@ -402,7 +567,16 @@ export class Renderer {
       }
     }
 
-    this.ballLook.set(e.ballId, { note: e.note, step: e.step, v: e.velocity, chain: e.chain });
+    if (e.form === 'circle') {
+      // キックは拍で鳴るのでボールは接触から離れている。ボール自身は光らせず（flash 0）色と連鎖だけ移す。
+      // 接触のあとに別の図形に当たっていたら（そちらの光が新しい）何もしない
+      const prev = this.ballLook.get(e.ballId);
+      if (!prev || prev.step <= e.contactStep) {
+        this.ballLook.set(e.ballId, { note: e.note, step: e.step, v: e.velocity, chain: e.chain, flash: 0 });
+      }
+    } else {
+      this.ballLook.set(e.ballId, { note: e.note, step: e.step, v: e.velocity, chain: e.chain, flash: 1 });
+    }
 
     // 連鎖: 通った図形を覚え、5 連鎖（以後 3 つごと）で順に光らせ直す
     let path = this.ballPath.get(e.ballId);
@@ -422,11 +596,15 @@ export class Renderer {
     this.energyTarget = e.energy;
     this.energyStep = e.step;
 
-    if (e.velocity >= 0.25) {
-      const r = { x: e.x, y: e.y, step: e.step, v: e.velocity, note: e.note };
-      if (this.rippleBuf.length < MAX_RIPPLES) this.rippleBuf.push(r);
-      else this.rippleBuf[this.rippleHead] = r;
-      this.rippleHead = (this.rippleHead + 1) % MAX_RIPPLES;
+    // 打点の波紋（circle は重心の輪で代える。square は短く小さく）
+    if (e.velocity >= 0.25 && e.form !== 'circle') {
+      const wood = e.form === 'square';
+      this.pushRipple({
+        x: e.x, y: e.y, step: e.step, note: e.note, r0: BALL_RADIUS,
+        grow: wood ? 12 + 20 * e.velocity : 20 + 40 * e.velocity,
+        dur: wood ? WOOD_RIPPLE_SEC : 0.5,
+        gain: 1.2 * e.velocity,
+      });
     }
   }
 
@@ -531,6 +709,7 @@ export class Renderer {
     else commit(this.trails, 0);
     this.drawShapes(rs, dt, preview);
     this.drawRipples(rs);
+    this.drawGlints(rs);
     this.drawEmitters(rs, dt);
     this.gc(head);
 
@@ -541,9 +720,9 @@ export class Renderer {
 
   /** ステップ s 時点のボールの強度（衝突直後に明るく、指数で減衰） */
   private ballIntensity(look: BallLook | undefined, s: number): number {
-    if (!look || s < look.step) return 0.55;
+    if (!look || s < look.step || look.flash <= 0) return 0.55;
     const t = (s - look.step) / HZ;
-    return 0.55 + (1.0 + 1.5 * look.v) * Math.exp(-t / 0.09);
+    return 0.55 + look.flash * (1.0 + 1.5 * look.v) * Math.exp(-t / 0.09);
   }
 
   private ballColor(look: BallLook | undefined): Color {
@@ -574,7 +753,7 @@ export class Renderer {
         }
         const look = this.ballLook.get(id);
         let scale = BALL_RADIUS;
-        if (look && rs >= look.step) scale *= 1 + 0.35 * Math.exp(-(rs - look.step) / HZ / 0.06);
+        if (look && rs >= look.step) scale *= 1 + 0.35 * look.flash * Math.exp(-(rs - look.step) / HZ / 0.06);
         d.position.set(x, -y, 0);
         d.rotation.set(0, 0, 0);
         d.scale.set(scale, scale, 1);
@@ -781,11 +960,39 @@ export class Renderer {
       let sHit = 0;
       let vib = 0;
       let white = 0;
+      let k = 1;
+      let echo = 0;
+      let echoK = 1;
       const h = s.hit;
       if (h) {
         const t = Math.max(0, (rs - h.step) / HZ);
         if (t > 3 * h.tau && t > 1.2) {
           s.hit = null;
+        } else if (s.form === 'circle') {
+          // キック: 図形全体が脈打つ（速い立ち上がり → h.tau で減衰）。打点の光・揺れはなし
+          const env = (1 - Math.exp(-t / KICK_ATTACK)) * Math.exp(-t / h.tau);
+          base += (KICK_GAIN + KICK_GAIN_V * h.v) * env;
+          k = 1 + KICK_SCALE * (0.5 + h.v) * env;
+          white = 0.15 * env;
+        } else if (s.form === 'triangle') {
+          // 金属: 短い閃き + 打点の細い光がゆっくり滲む + 長く淡い余韻（きらめきの粒は drawGlints）
+          base += (0.3 + 0.4 * h.v) * Math.exp(-t / 0.08) + METAL_GLOW * h.v * Math.exp(-t / h.tau);
+          spot = (0.5 + 0.9 * h.v) * Math.exp(-t / 0.3);
+          sigma = Math.min(4 + 60 * t, s.perimeter);
+          sHit = h.s;
+          white = 0.3 * Math.exp(-t / 0.05);
+        } else if (s.form === 'square') {
+          // 木: 短く鋭い閃光、余韻ほぼなし。外側に細い輪郭が一瞬弾ける
+          base += (0.6 + 0.8 * h.v) * Math.exp(-t / WOOD_FLASH);
+          spot = (0.8 + 1.2 * h.v) * Math.exp(-t / 0.05);
+          sigma = 14;
+          sHit = h.s;
+          white = 0.4 * Math.exp(-t / 0.035);
+          if (t < WOOD_ECHO_SEC) {
+            const q = t / WOOD_ECHO_SEC;
+            echo = 0.6 * h.v * (1 - q) ** 2;
+            echoK = 1 + WOOD_ECHO_GROW * easeOutCubic(q);
+          }
         } else {
           // 線全体の短いフラッシュ + 低音ほど長く残る余韻
           base += (0.4 + 0.6 * h.v) * Math.exp(-t / 0.18) + 0.2 * h.v * Math.exp(-t / h.tau);
@@ -811,9 +1018,14 @@ export class Renderer {
       const hv = this.hoverAmt.get(s.group) ?? 0;
       base = Math.max(base, 0.3 + 0.3 * hv);
       tint.copy(noteColor(s.note, mode)).lerp(OFF_WHITE, white);
-      const v = this.pose(s, shapeAngle(s, rs), 1);
+      const phi = shapeAngle(s, rs);
+      const v = this.pose(s, phi, k);
       this.drawOutline(v, s.n, s.closed, s.kind === 'bumper', tint, LINE_WIDTH + 1.5 * hv,
         base, spot, sigma, sHit, vib);
+      if (echo > 0.01) {
+        const ve = this.pose(s, phi, echoK);
+        this.drawOutline(ve, s.n, s.closed, false, tint, 1, echo, 0, 1, 0, 0);
+      }
     }
 
     // 消えかけの図形: 遅延のあいだは待機の明るさ、その後 0.8·(1−p)² で消しながら重心へ 10% 縮める
@@ -871,18 +1083,54 @@ export class Renderer {
     const c = this.color;
     let n = 0;
     for (const r of this.rippleBuf) {
-      const p = (rs - r.step) / HZ / 0.5;
+      const p = (rs - r.step) / HZ / r.dur;
       if (p < 0 || p >= 1) continue;
-      const radius = BALL_RADIUS + (20 + 40 * r.v) * easeOutCubic(p);
+      const radius = r.r0 + r.grow * easeOutCubic(p);
       d.position.set(r.x, -r.y, 0);
       d.rotation.set(0, 0, 0);
       d.scale.set(radius, radius, 1);
       d.updateMatrix();
       this.ripples.setMatrixAt(n, d.matrix);
-      this.ripples.setColorAt(n, c.copy(noteColor(r.note, this.params.colorMode)).multiplyScalar(1.2 * r.v * (1 - p) ** 2));
+      this.ripples.setColorAt(n, c.copy(noteColor(r.note, this.params.colorMode)).multiplyScalar(r.gain * (1 - p) ** 2));
       n++;
     }
     commit(this.ripples, n);
+  }
+
+  /** triangle のきらめき: 辺の上の小さな点が瞬きながら長く残る */
+  private drawGlints(rs: number): void {
+    const d = this.dummy;
+    const c = this.color;
+    const mode = this.params.colorMode;
+    const pt = this.pt;
+    let n = 0;
+    for (let i = 0; i < MAX_GLINTS; i++) {
+      const t = (rs - this.gStep[i]!) / HZ - this.gDelay[i]!;
+      if (!(t >= 0)) continue;
+      const tau = this.gTau[i]!;
+      const s = this.shapes.get(this.gGroup[i]!);
+      if (!s || t > 3 * tau) {
+        this.gStep[i] = Infinity;
+        continue;
+      }
+      let tw = 0.5 + 0.5 * Math.sin(2 * Math.PI * this.gFreq[i]! * t + this.gPhase[i]!);
+      tw *= tw;
+      tw *= tw;
+      const env = (1 - Math.exp(-t / 0.02)) * Math.exp(-t / tau);
+      const intensity = this.gGain[i]! * env * (0.2 + 0.8 * tw);
+      if (intensity < 0.01) continue;
+      this.pointAt(s, shapeAngle(s, rs), this.gArc[i]!);
+      const off = this.gOff[i]!;
+      const r = this.gSize[i]! * (0.7 + 0.3 * tw);
+      d.position.set(pt.x + pt.nx * off, -(pt.y + pt.ny * off), 0);
+      d.rotation.set(0, 0, 0);
+      d.scale.set(r, r, 1);
+      d.updateMatrix();
+      this.glints.setMatrixAt(n, d.matrix);
+      this.glints.setColorAt(n, c.copy(noteColor(s.note, mode)).lerp(OFF_WHITE, 0.6).multiplyScalar(intensity));
+      n++;
+    }
+    commit(this.glints, n);
   }
 
   /**

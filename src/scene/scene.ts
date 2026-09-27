@@ -3,8 +3,9 @@
 // v1（segs）も読み込めて、v2（shapes）に変換して返す。
 
 import { DRIFT_AMP_MAX, MAX_SEGS, MAX_SHAPE_EDGES, MIN_LINE_LEN, WORLD_H, WORLD_W } from '../sim/constants';
+import { inferForm, isShapeForm } from '../sim/form';
 import type { Sim } from '../sim/sim';
-import type { DriftMode, SceneData, SceneShape, SegKind } from '../sim/types';
+import type { DriftMode, SceneData, SceneShape, SegKind, ShapeForm } from '../sim/types';
 
 export const SCENE_HASH_KEY = 's';
 /** v1 と同じキーを使い続ける（中身の v で判別する） */
@@ -17,8 +18,10 @@ const SEG_KINDS: readonly SegKind[] = ['line', 'bumper'];
 /** 今の sim の配置。図形は「描いたときの座標」で保存する（回転中でも読み込み後は描いた角度から回り直す） */
 export function sceneFromSim(sim: Sim): SceneData {
   const shapes: SceneShape[] = [];
+  const forms: ShapeForm[] = [];
   for (const sh of sim.shapes.values()) {
     shapes.push([sh.kind, sh.dir, sh.closed, ...sh.points.flat()]);
+    forms.push(sh.form);
   }
   return {
     v: 2,
@@ -28,6 +31,7 @@ export function sceneFromSim(sim: Sim): SceneData {
     rotationSpeed: sim.rotationSpeed,
     drift: { mode: sim.driftMode, amp: sim.driftAmp },
     shapes,
+    forms,
   };
 }
 
@@ -88,6 +92,7 @@ export function validateScene(raw: unknown): SceneData | null {
   if (!DRIFT_MODES.includes(d.mode as DriftMode) || !num(d.amp)) return null;
 
   const shapes: SceneShape[] = [];
+  const forms: ShapeForm[] = [];
   if (r.v === 1) {
     if (!Array.isArray(r.segs) || r.segs.length > MAX_SEGS) return null;
     for (const s of r.segs) {
@@ -96,11 +101,14 @@ export function validateScene(raw: unknown): SceneData | null {
       const pts = [cx(s[0]), cy(s[1]), cx(s[2]), cy(s[3])];
       if (Math.hypot(pts[2]! - pts[0]!, pts[3]! - pts[1]!) < MIN_LINE_LEN) continue;
       shapes.push(['line', s[4], false, ...pts]);
+      forms.push('line');
     }
   } else {
     if (!Array.isArray(r.shapes)) return null;
+    // D18: forms は shapes と同じ順。無い・長さが合わない場合はすべて、不正な値の要素はその図形だけ点列から推定する
+    const rawForms = Array.isArray(r.forms) && r.forms.length === r.shapes.length ? (r.forms as unknown[]) : null;
     let total = 0;
-    for (const s of r.shapes) {
+    for (const [idx, s] of r.shapes.entries()) {
       if (!Array.isArray(s) || s.length < 7 || s.length % 2 === 0) return null;
       const [kind, dir, closed, ...flat] = s as unknown[];
       if (!SEG_KINDS.includes(kind as SegKind) || (dir !== 1 && dir !== -1) || typeof closed !== 'boolean') return null;
@@ -121,6 +129,9 @@ export function validateScene(raw: unknown): SceneData | null {
       total += edgeCount(sh);
       if (total > MAX_SEGS) break;
       shapes.push(sh);
+      const f = rawForms?.[idx];
+      // 推定は整えた後の点数で（sim の addShape と同じ）
+      forms.push(isShapeForm(f) ? f : inferForm(pts.length / 2, closed));
     }
   }
   return {
@@ -131,5 +142,6 @@ export function validateScene(raw: unknown): SceneData | null {
     rotationSpeed: clamp(r.rotationSpeed, 0, 2),
     drift: { mode: d.mode as DriftMode, amp: clamp(Math.round(d.amp), 0, DRIFT_AMP_MAX) },
     shapes,
+    forms,
   };
 }
