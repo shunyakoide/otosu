@@ -4,6 +4,16 @@
 export const WORLD_W = 1920;
 export const WORLD_H = 1080;
 
+/** 範囲（y の下限は常に 0 = 放出口の高さ。上は放出口より上なので置く意味がない） */
+export type Bounds = { minX: number; maxX: number; maxY: number };
+/** 16:9 のワールドそのもの。ボールを消す範囲の既定値 */
+export const WORLD_BOUNDS: Bounds = { minX: 0, maxX: WORLD_W, maxY: WORLD_H };
+/**
+ * 図形を置ける範囲の上限（D23）。ウィンドウが 16:9 でないとき、表示されているワールドの外にも置ける。
+ * 左右は各 1 画面分、下は縦長の画面（9:19.5 程度）まで
+ */
+export const PLACE_BOUNDS: Bounds = { minX: -WORLD_W, maxX: 2 * WORLD_W, maxY: 4 * WORLD_H };
+
 /** 物理の固定タイムステップ */
 export const HZ = 120;
 export const DT = 1 / HZ;

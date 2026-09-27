@@ -3,7 +3,7 @@ import {
   BALL_LINE_COOLDOWN, BUMPER_MAX_SPEED, BUMPER_RESTITUTION, CHAIN_WINDOW, DRIFT_AMP_DEFAULT, DRIFT_AMP_MAX,
   DRIFT_PERIOD, DT, ENERGY_HITS, G, HISTORY, HIT_RADIUS, HZ, LINE_COOLDOWN, MAX_AGE_STEPS, MAX_BALLS, MAX_SEGS,
   MAX_SHAPE_EDGES, MIN_LINE_LEN, PHRASE_LEN, REST_VN, RESTITUTION, SECTION_BARS, STALL_SPEED, STALL_STEPS,
-  TANGENT_KEEP, V_MIN, WORLD_H, WORLD_W, impactVelocity, maxOmega,
+  PLACE_BOUNDS, TANGENT_KEEP, V_MIN, WORLD_BOUNDS, WORLD_W, impactVelocity, maxOmega, type Bounds,
 } from './constants';
 import { inferForm } from './form';
 import { formMidi, lengthToNote, sectionAt, sectionSteps } from './music';
@@ -92,10 +92,12 @@ export type Shape = {
 };
 
 /**
- * 点列を整数 px に丸めて画面内にクランプし、連続する重複点（閉じた図形は末尾の始点も）を除く。
+ * 点列を整数 px に丸めて範囲 b 内にクランプし、連続する重複点（閉じた図形は末尾の始点も）を除く。
  * 図形にならなければ null。
  */
-export function normalizePoints(points: readonly (readonly [number, number])[], closed: boolean): [number, number][] | null {
+export function normalizePoints(
+  points: readonly (readonly [number, number])[], closed: boolean, b: Bounds = PLACE_BOUNDS,
+): [number, number][] | null {
   // 閉じた図形は、はみ出したぶん全体を平行移動して画面内に収める（点ごとのクランプだと形が潰れるため）
   let dx = 0;
   let dy = 0;
@@ -104,18 +106,18 @@ export function normalizePoints(points: readonly (readonly [number, number])[], 
     const ys = points.map((p) => p[1]);
     const [x0, x1, y0, y1] = [Math.min(...xs), Math.max(...xs), Math.min(...ys), Math.max(...ys)];
     if (Number.isFinite(x0 + x1 + y0 + y1)) {
-      if (x0 < 0) dx = -x0;
-      else if (x1 > WORLD_W) dx = WORLD_W - x1;
+      if (x0 < b.minX) dx = b.minX - x0;
+      else if (x1 > b.maxX) dx = b.maxX - x1;
       if (y0 < 0) dy = -y0;
-      else if (y1 > WORLD_H) dy = WORLD_H - y1;
+      else if (y1 > b.maxY) dy = b.maxY - y1;
     }
   }
   const out: [number, number][] = [];
   for (const q of points) {
     const p = [q[0] + dx, q[1] + dy];
     // 画面内にクランプ（保存形式と同じ扱いにして、読み込み後も同じ形になるように）
-    const x = Math.min(WORLD_W, Math.max(0, Math.round(p[0])));
-    const y = Math.min(WORLD_H, Math.max(0, Math.round(p[1])));
+    const x = Math.min(b.maxX, Math.max(b.minX, Math.round(p[0])));
+    const y = Math.min(b.maxY, Math.max(0, Math.round(p[1])));
     if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
     const last = out[out.length - 1];
     if (last && last[0] === x && last[1] === y) continue;
@@ -139,6 +141,8 @@ export class Sim {
   rotationSpeed = 0.3;
   driftMode: DriftMode = 'drift';
   driftAmp = DRIFT_AMP_DEFAULT;
+  /** 表示されている範囲。ここから出たボールを消す（D23） */
+  view: Bounds = WORLD_BOUNDS;
 
   /** 全図形の辺（追加順）。当たり判定の順序もこれ */
   readonly segments: Segment[] = [];
@@ -264,6 +268,16 @@ export class Sim {
         case 'setDrift':
           this.setDrift(cmd.mode, cmd.amp);
           break;
+        case 'setView': {
+          // ワールドより狭くはしない（16:9 の中は常に見えている）。広げるのは置ける範囲の上限まで
+          const v = cmd.bounds;
+          this.view = {
+            minX: Math.round(Math.min(0, Math.max(PLACE_BOUNDS.minX, v.minX))),
+            maxX: Math.round(Math.max(WORLD_W, Math.min(PLACE_BOUNDS.maxX, v.maxX))),
+            maxY: Math.round(Math.max(WORLD_BOUNDS.maxY, Math.min(PLACE_BOUNDS.maxY, v.maxY))),
+          };
+          break;
+        }
         case 'loadScene':
           this.loadScene(s, cmd.scene);
           break;
@@ -657,7 +671,8 @@ export class Sim {
     const margin = 50;
     let w = 0;
     for (const b of this.balls) {
-      const out = b.y > WORLD_H + margin || b.x < -margin || b.x > WORLD_W + margin;
+      const v = this.view;
+      const out = b.y > v.maxY + margin || b.x < v.minX - margin || b.x > v.maxX + margin;
       const old = s - b.bornStep > MAX_AGE_STEPS;
       const stalled = b.slowSteps > STALL_STEPS;
       if (!out && !old && !stalled) this.balls[w++] = b;

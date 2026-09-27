@@ -19,17 +19,11 @@
         position: fixed; left: 16px; bottom: 12px; font-size: 12px; opacity: 0.35;
         letter-spacing: 0.08em; pointer-events: none; transition: opacity 0.4s;
       }
-      #hint.hidden, #frame.hidden { opacity: 0; }
-      /* 図形を置ける範囲（ワールド）。画面の縦横比が 16:9 でないときに、外側に描いても内側へ寄せられることが分かるように */
-      #frame {
-        position: fixed; border: 1px dashed rgba(232, 236, 242, 0.14); pointer-events: none;
-        box-sizing: border-box; transition: opacity 0.4s;
-      }
+      #hint.hidden { opacity: 0; }
     </style>
   </head>
   <body>
     <div id="app"></div>
-    <div id="frame"></div>
     <div id="hint">drag: draw · 1–5: line / pen / circle / triangle / square · shift: bumper · right-click: erase · M: mute · C: clear · F: fullscreen · H: hide ui</div>
     <div id="overlay"><div style="text-align:center"><b>otosu</b>click to start</div></div>
     <script type="module" src="/src/main.ts"></script>

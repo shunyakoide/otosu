@@ -3,7 +3,7 @@ import { Audio } from './audio/audio';
 import { Input, TOOLS, type Tool } from './input/input';
 import { Midi } from './midi/midi';
 import { Renderer } from './render/render';
-import { HISTORY, HZ, WORLD_H, WORLD_W } from './sim/constants';
+import { HISTORY, HZ } from './sim/constants';
 import { midiAt } from './sim/music';
 import { Sim } from './sim/sim';
 import type { Command, DriftMode, SceneData, SimEvent } from './sim/types';
@@ -105,22 +105,16 @@ const input = new Input(
   sim,
   (x, y) => renderer.toWorld(x, y),
   (x, y) => renderer.pickShape(x, y),
+  () => renderer.viewBounds,
 );
 // ドラッグ中に音程が変わったら小さく鳴らす（D11）。音高は今の区間のもの
 input.onPreviewNote = (slot) => {
   if (started && !params.muted && params.internalSound) audio.tick(midiAt(slot, sim.sectionAt(sim.step)));
 };
-// 図形を置ける範囲の枠（UI と一緒に H で隠す）
-const worldFrame = document.getElementById('frame')!;
-const layoutFrame = () => {
-  const s = renderer.worldScale;
-  const o = renderer.toWorld(0, 0);
-  Object.assign(worldFrame.style, {
-    left: `${-o.x * s}px`, top: `${-o.y * s}px`, width: `${WORLD_W * s}px`, height: `${WORLD_H * s}px`,
-  });
-};
-layoutFrame();
-addEventListener('resize', layoutFrame);
+// ボールは表示されている範囲から出るまで生かす（D23）
+const syncView = () => sim.enqueue({ kind: 'setView', bounds: { ...renderer.viewBounds } });
+syncView();
+addEventListener('resize', syncView);
 const setTool = (t: Tool) => {
   params.tool = t;
   input.setTool(t);
@@ -238,7 +232,6 @@ addEventListener('keydown', (e) => {
   } else if (e.key === 'h' || e.key === 'H') {
     gui.show(gui._hidden);
     document.getElementById('hint')!.classList.toggle('hidden');
-    worldFrame.classList.toggle('hidden');
   } else if (e.key === 'c' || e.key === 'C') {
     sim.enqueue({ kind: 'clearSegments' });
   } else if (e.key === 'r' || e.key === 'R') {

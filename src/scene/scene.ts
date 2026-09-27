@@ -2,7 +2,7 @@
 // 形式: SceneData の JSON を UTF-8 → base64url。URL では `#s=<code>`、localStorage にも同じ文字列を置く。
 // v1（segs）も読み込めて、v2（shapes）に変換して返す。
 
-import { DRIFT_AMP_MAX, MAX_SEGS, MAX_SHAPE_EDGES, MIN_LINE_LEN, WORLD_H, WORLD_W } from '../sim/constants';
+import { DRIFT_AMP_MAX, MAX_SEGS, MAX_SHAPE_EDGES, MIN_LINE_LEN, PLACE_BOUNDS } from '../sim/constants';
 import { inferForm, isShapeForm } from '../sim/form';
 import type { Sim } from '../sim/sim';
 import type { DriftMode, SceneData, SceneShape, SegKind, ShapeForm } from '../sim/types';
@@ -57,8 +57,8 @@ export function decodeScene(code: string): SceneData | null {
 
 const num = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v);
 const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
-const cx = (v: number) => clamp(Math.round(v), 0, WORLD_W);
-const cy = (v: number) => clamp(Math.round(v), 0, WORLD_H);
+const cx = (v: number) => clamp(Math.round(v), PLACE_BOUNDS.minX, PLACE_BOUNDS.maxX);
+const cy = (v: number) => clamp(Math.round(v), 0, PLACE_BOUNDS.maxY);
 
 /** 点列（整数・画面内にクランプ済み）が図形として成り立つか: 連続重複を除いた点数と周長 */
 function shapeOk(pts: number[], closed: boolean): boolean {

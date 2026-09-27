@@ -1,4 +1,4 @@
-import { MIN_LINE_LEN } from '../sim/constants';
+import { MIN_LINE_LEN, type Bounds } from '../sim/constants';
 import { lengthToNote } from '../sim/music';
 import { normalizePoints, type Sim } from '../sim/sim';
 import type { Preview } from '../render/render';
@@ -85,6 +85,7 @@ export class Input {
   private readonly sim: Sim;
   private readonly toWorld: (x: number, y: number) => { x: number; y: number };
   private readonly pick: ShapePicker;
+  private readonly bounds: () => Bounds;
   private hoverTimer = 0;
   private start: Pt = [0, 0];
   private raw: Pt[] = [];
@@ -96,10 +97,12 @@ export class Input {
     sim: Sim,
     toWorld: (x: number, y: number) => { x: number; y: number },
     pick: ShapePicker,
+    bounds: () => Bounds,
   ) {
     this.sim = sim;
     this.toWorld = toWorld;
     this.pick = pick;
+    this.bounds = bounds;
     el.addEventListener('pointerdown', (e) => this.down(e));
     el.addEventListener('pointermove', (e) => this.move(e));
     el.addEventListener('pointerup', (e) => this.up(e));
@@ -203,8 +206,8 @@ export class Input {
         closed = true;
       }
     }
-    // 確定時と同じ補正（画面外にはみ出た分を戻す）をプレビューにも掛け、描いた位置と置かれる位置を一致させる
-    points = normalizePoints(points, closed) ?? points;
+    // 画面からはみ出た分を戻す。確定時も同じ点列を送るので、描いた位置と置かれる位置が一致する
+    points = normalizePoints(points, closed, this.bounds()) ?? points;
     this.shape = { points, closed };
     const pv = this.preview;
     pv.points.length = 0;

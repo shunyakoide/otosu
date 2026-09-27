@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { driftOffset, hitAllowed, segmentAngle, Sim } from '../src/sim/sim';
+import { driftOffset, hitAllowed, normalizePoints, segmentAngle, Sim } from '../src/sim/sim';
 import { formMidi, kickMidi, lengthToNote, midiAt, PROG, sectionAt, sectionSteps } from '../src/sim/music';
 import { inferForm } from '../src/sim/form';
 import { rayCapsule } from '../src/sim/collide';
@@ -483,10 +483,28 @@ describe('scene (P2 / v2)', () => {
     const s = validateScene({
       ...scene,
       drift: { mode: 'drift', amp: 999 },
-      shapes: [['line', 1, false, 0, 0, 10, 0], ['line', 1, false, -50, 10.4, 500, 10], ['line', 1, true, 5, 5, 200, 5, 100, 100, 5, 5]],
+      shapes: [['line', 1, false, 0, 0, 10, 0], ['line', 1, false, -5000, 10.4, 500, 10], ['line', 1, true, 5, 5, 200, 5, 100, 100, 5, 5]],
     })!;
     expect(s.drift.amp).toBe(80);
-    expect(s.shapes).toEqual([['line', 1, false, 0, 10, 500, 10], ['line', 1, true, 5, 5, 200, 5, 100, 100]]);
+    expect(s.shapes).toEqual([['line', 1, false, -1920, 10, 500, 10], ['line', 1, true, 5, 5, 200, 5, 100, 100]]);
+  });
+
+  it('places shapes outside the 16:9 world and culls balls by the view (D23)', () => {
+    // 閉じた図形は置ける範囲に収まるよう平行移動、開いた線は点ごとにクランプ
+    expect(normalizePoints([[100, 4400], [200, 4400], [150, 4500]], true)).toEqual([[100, 4220], [200, 4220], [150, 4320]]);
+    expect(normalizePoints([[-100, 1500], [2000, 1500]], false, { minX: 0, maxX: 1920, maxY: 2000 })).toEqual([[0, 1500], [1920, 1500]]);
+    const hitsBelow = (maxY: number) => {
+      const sim = new Sim({ bpm: 90, pattern: [2] });
+      sim.enqueue({ kind: 'setView', bounds: { minX: -9999, maxX: 9999, maxY } });
+      sim.enqueue({ kind: 'addShape', points: [[500, 1600], [1400, 1700]], closed: false, segKind: 'line' });
+      run(sim, 1);
+      return { view: sim.view, n: run(sim, 1500).filter((e) => e.kind === 'hit' && e.y > 1080).length };
+    };
+    const tall = hitsBelow(2000);
+    expect(tall.view).toEqual({ minX: -1920, maxX: 3840, maxY: 2000 });
+    expect(tall.n).toBeGreaterThan(0);
+    // 表示範囲がワールドだけなら、下の図形に届く前にボールが消える
+    expect(hitsBelow(0).n).toBe(0);
   });
 
   it('sceneFromSim returns the drawn coordinates, even while rotating', () => {

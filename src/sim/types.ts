@@ -1,3 +1,5 @@
+import type { Bounds } from './constants';
+
 /** 辺の種類（図形単位で同じ値。D13） */
 export type SegKind = 'line' | 'bumper';
 
@@ -120,6 +122,8 @@ export type Command =
   | { kind: 'setRotation'; on: boolean; speed: number }
   | { kind: 'setTempo'; bpm: number; pattern: readonly number[] }
   | { kind: 'setDrift'; mode: DriftMode; amp: number }
+  /** 表示されている範囲（D23）。これより外に出たボールを消す */
+  | { kind: 'setView'; bounds: Bounds }
   | { kind: 'loadScene'; scene: SceneData };
 
 export type HitEvent = {

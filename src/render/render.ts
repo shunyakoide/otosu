@@ -9,7 +9,7 @@ import { AfterimagePass } from 'three/addons/postprocessing/AfterimagePass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { closestOnSegment } from '../sim/collide';
-import { BALL_RADIUS, HZ, LINE_WIDTH, MAX_BALLS, MIN_LINE_LEN, WORLD_H, WORLD_W } from '../sim/constants';
+import { BALL_RADIUS, HZ, LINE_WIDTH, MAX_BALLS, MIN_LINE_LEN, WORLD_H, WORLD_W, type Bounds } from '../sim/constants';
 import { lengthToNote } from '../sim/music';
 import type { SegKind, ShapeAddedEvent, ShapeForm, SimEvent, Snapshot } from '../sim/types';
 import { GRAY, noteColor, OFF_WHITE, type ColorMode } from './palette';
@@ -311,6 +311,7 @@ export class Renderer {
   private scale = 1;
   private offsetX = 0;
   private offsetY = 0;
+  private view: Bounds = { minX: 0, maxX: WORLD_W, maxY: WORLD_H };
 
   private readonly params: RenderParams;
 
@@ -350,6 +351,11 @@ export class Renderer {
   /** 画面座標 → 論理ワールド座標 */
   toWorld(clientX: number, clientY: number): { x: number; y: number } {
     return { x: (clientX - this.offsetX) / this.scale, y: (clientY - this.offsetY) / this.scale };
+  }
+
+  /** 表示されている範囲（ワールド座標） */
+  get viewBounds(): Bounds {
+    return this.view;
   }
 
   get worldScale(): number {
@@ -396,14 +402,16 @@ export class Renderer {
     const h = innerHeight;
     const s = Math.min(w / WORLD_W, h / WORLD_H);
     this.scale = s;
+    // 16:9 のワールドは左右中央・上寄せ。余りはウィンドウ全体を使う（縦長なら下、横長なら左右。D23）
     this.offsetX = (w - WORLD_W * s) / 2;
-    this.offsetY = (h - WORLD_H * s) / 2;
+    this.offsetY = 0;
     const viewW = w / s;
     const viewH = h / s;
     this.camera.left = -(viewW - WORLD_W) / 2;
     this.camera.right = this.camera.left + viewW;
-    this.camera.top = (viewH - WORLD_H) / 2;
-    this.camera.bottom = this.camera.top - viewH;
+    this.camera.top = 0;
+    this.camera.bottom = -viewH;
+    this.view = { minX: this.camera.left, maxX: this.camera.right, maxY: viewH };
     this.camera.updateProjectionMatrix();
     this.renderer.setSize(w, h);
     this.composer.setSize(w, h);
