@@ -1,6 +1,6 @@
 import { MIN_LINE_LEN } from '../sim/constants';
 import { lengthToNote } from '../sim/music';
-import type { Sim } from '../sim/sim';
+import { normalizePoints, type Sim } from '../sim/sim';
 import type { Preview } from '../render/render';
 
 // ツールで図形を描く／右クリックで図形を消す。座標はすべて論理ワールド座標（D8-7）。
@@ -203,6 +203,8 @@ export class Input {
         closed = true;
       }
     }
+    // 確定時と同じ補正（画面外にはみ出た分を戻す）をプレビューにも掛け、描いた位置と置かれる位置を一致させる
+    points = normalizePoints(points, closed) ?? points;
     this.shape = { points, closed };
     const pv = this.preview;
     pv.points.length = 0;
