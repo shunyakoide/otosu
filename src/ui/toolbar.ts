@@ -127,11 +127,14 @@ export class Toolbar {
     sep();
     const scenesBtn: HTMLButtonElement = btn(ICONS.scenes, 'save / load scenes', () => on.scenes(scenesBtn));
     this.popBtns = { motion: motionBtn, light: lightBtn, scenes: scenesBtn };
-    btn(ICONS.fullscreen, 'fullscreen (F)', on.fullscreen);
+    // iPhone の Safari のように全画面にできない環境ではボタンを出さない
+    if (document.fullscreenEnabled) btn(ICONS.fullscreen, 'fullscreen (F)', on.fullscreen);
 
     const help = document.createElement('div');
     help.id = 'toolbar-help';
-    help.textContent = 'drag: draw · shift: bumper · right-click: erase · H: hide ui · , : fine-tune';
+    help.textContent = matchMedia('(hover: none)').matches
+      ? 'drag: draw · long-press: erase'
+      : 'drag: draw · shift: bumper · right-click: erase · H: hide ui · , : fine-tune';
     help.classList.add('ui');
     parent.append(this.el, help);
   }

@@ -1,7 +1,7 @@
 import { Audio } from './audio/audio';
 import { Input, TOOLS, type Tool } from './input/input';
 import { Midi } from './midi/midi';
-import { Renderer } from './render/render';
+import { Renderer, TOP_BAND_PX } from './render/render';
 import { HISTORY, HZ } from './sim/constants';
 import { midiAt } from './sim/music';
 import { Sim } from './sim/sim';
@@ -136,7 +136,6 @@ input.onPreviewNote = (slot) => {
 // ボールは表示されている範囲から出るまで生かす（D23）
 const syncView = () => sim.enqueue({ kind: 'setView', bounds: { ...renderer.viewBounds } });
 syncView();
-addEventListener('resize', syncView);
 const setTool = (t: Tool) => {
   params.tool = t;
   input.setTool(t);
@@ -467,18 +466,34 @@ addEventListener('keydown', (e) => {
   }
 });
 let cursorTimer = 0;
-addEventListener('pointermove', () => {
+addEventListener('pointermove', (e) => {
   document.body.classList.remove('idle');
   clearTimeout(cursorTimer);
+  // タッチではカーソルがなく、消えたツールバーを出し直す手段もないので隠さない
+  if (e.pointerType === 'touch') return;
   cursorTimer = window.setTimeout(() => document.body.classList.add('idle'), 2000);
 });
+
+// 狭い画面ではツールバーが折り返すので、その高さの分だけワールドを下げる（D24）
+const layout = () => {
+  const band = Math.max(TOP_BAND_PX, Math.ceil(toolbar.el.getBoundingClientRect().bottom) + 6);
+  document.documentElement.style.setProperty('--band', `${band}px`);
+  renderer.setTopBand(band);
+  syncView();
+};
+layout();
+addEventListener('resize', layout);
 
 // ---- 開始 ----
 let started = false;
 let t0 = 0;
 const overlay = document.getElementById('overlay')!;
-overlay.addEventListener('pointerdown', async () => {
+// iOS Safari は pointerdown では音を出させてくれないので click で始める
+overlay.addEventListener('click', async () => {
   if (started) return;
+  // iOS: マナーモードでも鳴らす（対応していないブラウザでは何もしない）
+  const session = (navigator as Navigator & { audioSession?: { type: string } }).audioSession;
+  if (session) session.type = 'playback';
   overlay.textContent = '…';
   await audio.start(params.bpm);
   audio.setVolume(params.volume);

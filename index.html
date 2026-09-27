@@ -2,10 +2,16 @@
 <html lang="ja">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="theme-color" content="#000000" />
     <title>otosu</title>
     <style>
-      html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
+      html, body { margin: 0; height: 100%; background: #000; overflow: hidden; overscroll-behavior: none; }
+      /* 連打で拡大・長押しで文字選択・タップの灰色の光が出ないように */
+      body { touch-action: manipulation; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; -webkit-tap-highlight-color: transparent; }
       body { font-family: ui-sans-serif, system-ui, sans-serif; color: #e8ecf2; }
       body.idle, body.idle canvas { cursor: none; }
       canvas { display: block; cursor: crosshair; touch-action: none; }
@@ -60,11 +66,27 @@
         font-size: 11px; letter-spacing: 0.06em; opacity: 0.3; pointer-events: none;
       }
       @media (max-width: 520px) { #toolbar-help { display: none; } }
+      .tap { display: none; }
+      /* ---- タッチ: ボタンを押しやすく。狭い画面ではツールバーを折り返す（帯の高さは main が測る） ---- */
+      @media (hover: none) {
+        #toolbar button:hover { color: rgba(232, 236, 242, 0.4); }
+        #toolbar button.on:hover { color: #fff; }
+        #toolbar .tb-tempo button { width: 30px; }
+        .click { display: none; }
+        .tap { display: inline; }
+      }
+      @media (max-width: 640px) {
+        #toolbar {
+          top: calc(6px + env(safe-area-inset-top)); width: calc(100vw - 16px); height: auto;
+          flex-wrap: wrap; justify-content: center; row-gap: 2px;
+        }
+        #toolbar i { display: none; }
+      }
     </style>
   </head>
   <body>
     <div id="app"></div>
-    <div id="overlay"><div style="text-align:center"><b>otosu</b>click to start</div></div>
+    <div id="overlay"><div style="text-align:center"><b>otosu</b><span class="click">click</span><span class="tap">tap</span> to start</div></div>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

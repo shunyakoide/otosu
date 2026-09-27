@@ -4,7 +4,7 @@
   --pn-dim: rgba(232, 236, 242, 0.42);
   --pn-faint: rgba(232, 236, 242, 0.14);
   --pn-accent: #fff;
-  position: fixed; top: 52px; right: 12px; width: 272px; max-height: calc(100vh - 64px);
+  position: fixed; top: var(--band, 52px); right: 12px; width: 272px; max-height: calc(100dvh - var(--band, 52px) - 12px);
   display: none; flex-direction: column;
   background: rgba(0, 0, 0, 0.66); border-radius: 12px;
   backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
@@ -106,5 +106,5 @@
 .pn-note.show { opacity: 1; }
 
 /* 保存の小窓: ツールバーの保存ボタンの真下に開く */
-.pn.pop { right: auto; width: 280px; max-height: 360px; }
+.pn.pop { right: auto; width: 280px; max-width: calc(100vw - 16px); max-height: min(360px, calc(100dvh - var(--band, 52px) - 12px)); }
 .pn.pop .pn-scroll { padding-top: 12px; }

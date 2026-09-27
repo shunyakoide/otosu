@@ -243,11 +243,12 @@ function hash01(a: number, b: number, c: number): number {
   return (h >>> 0) / 4294967296;
 }
 
-/** 画面上端のツールバー用の帯（CSS px）。index.html の #toolbar と合わせる */
+/** 画面上端のツールバー用の帯（CSS px）の既定値。狭い画面でツールバーが折り返すと setTopBand で広げる */
 export const TOP_BAND_PX = 52;
 
 export class Renderer {
   readonly canvas: HTMLCanvasElement;
+  private topBand = TOP_BAND_PX;
   private readonly renderer: WebGLRenderer;
   private readonly scene = new Scene();
   private readonly camera = new OrthographicCamera(0, WORLD_W, 0, -WORLD_H, -10, 10);
@@ -346,6 +347,13 @@ export class Renderer {
     addEventListener('resize', () => this.resize());
   }
 
+  /** ツールバーの帯の高さ（CSS px）。変わったときだけ作り直す */
+  setTopBand(px: number): void {
+    if (px === this.topBand) return;
+    this.topBand = px;
+    this.resize();
+  }
+
   setPixelRatio(r: number): void {
     this.renderer.setPixelRatio(r);
     this.resize();
@@ -404,16 +412,17 @@ export class Renderer {
     const w = innerWidth;
     const h = innerHeight;
     // 上端はツールバーの帯としてあけ、ワールドはその下から始める（D24）
-    const s = Math.min(w / WORLD_W, (h - TOP_BAND_PX) / WORLD_H);
+    const band = this.topBand;
+    const s = Math.min(w / WORLD_W, (h - band) / WORLD_H);
     this.scale = s;
     // 16:9 のワールドは左右中央・上寄せ。余りはウィンドウ全体を使う（縦長なら下、横長なら左右。D23）
     this.offsetX = (w - WORLD_W * s) / 2;
-    this.offsetY = TOP_BAND_PX;
+    this.offsetY = band;
     const viewW = w / s;
-    const viewH = (h - TOP_BAND_PX) / s;
+    const viewH = (h - band) / s;
     this.camera.left = -(viewW - WORLD_W) / 2;
     this.camera.right = this.camera.left + viewW;
-    this.camera.top = TOP_BAND_PX / s;
+    this.camera.top = band / s;
     this.camera.bottom = -viewH;
     this.view = { minX: this.camera.left, maxX: this.camera.right, maxY: viewH };
     this.camera.updateProjectionMatrix();

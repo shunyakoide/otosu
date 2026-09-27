@@ -3,7 +3,7 @@ import { lengthToNote } from '../sim/music';
 import { normalizePoints, type Sim } from '../sim/sim';
 import type { Preview } from '../render/render';
 
-// ツールで図形を描く／右クリックで図形を消す。座標はすべて論理ワールド座標（D8-7）。
+// ツールで図形を描く／右クリック（タッチでは長押し）で図形を消す。座標はすべて論理ワールド座標（D8-7）。
 // 消去とホバーの判定は描画側（表示中の図形・描画中の時刻の姿勢）に任せる（B3, D12）。
 
 export type Tool = 'line' | 'pen' | 'circle' | 'triangle' | 'square';
@@ -14,6 +14,10 @@ export type ShapePicker = (x: number, y: number) => number;
 
 /** カーソルが隠れるのと同じ時間でホバー予告も消す（投影時に予告だけ光り続けないように） */
 const HOVER_IDLE_MS = 2000;
+/** タッチ: この時間ほぼ動かさずに押し続けると、その場所の図形を消す（右クリックの代わり） */
+const LONG_PRESS_MS = 550;
+/** 長押しとみなす指のぶれ（CSS px） */
+const LONG_PRESS_SLOP = 10;
 /** ペン: 生の点の間隔・RDP の許容誤差・辺の上限（D12） */
 const PEN_MIN_STEP = 3;
 const PEN_EPS = 4;
@@ -91,6 +95,11 @@ export class Input {
   private raw: Pt[] = [];
   private shape: { points: Pt[]; closed: boolean } = { points: [], closed: false };
   private lastSlot = -1;
+  /** 描いている指（ペン・マウス）。2本目の指は無視する */
+  private pointerId = -1;
+  private pressTimer = 0;
+  private pressAt: Pt = [0, 0];
+  private lastPointerType = '';
 
   constructor(
     el: HTMLElement,
@@ -106,11 +115,17 @@ export class Input {
     el.addEventListener('pointerdown', (e) => this.down(e));
     el.addEventListener('pointermove', (e) => this.move(e));
     el.addEventListener('pointerup', (e) => this.up(e));
-    el.addEventListener('pointercancel', () => (this.preview.active = false));
+    el.addEventListener('pointercancel', (e) => {
+      if (e.pointerId !== this.pointerId) return;
+      this.preview.active = false;
+      this.pointerId = -1;
+      clearTimeout(this.pressTimer);
+    });
     el.addEventListener('pointerleave', () => this.setHover(false));
     el.addEventListener('contextmenu', (e) => {
       e.preventDefault();
-      this.erase(e);
+      // タッチの長押しでも contextmenu が来る（Android）。そちらは長押しの処理に任せる
+      if (this.lastPointerType !== 'touch') this.erase(e);
     });
     // ドラッグ中に Shift を押す／離すだけでもプレビューを切り替える
     addEventListener('keydown', (e) => e.key === 'Shift' && (this.preview.bumper = true));
@@ -136,8 +151,20 @@ export class Input {
   }
 
   private down(e: PointerEvent): void {
-    if (e.button !== 0) return;
+    this.lastPointerType = e.pointerType;
+    if (e.button !== 0 || this.preview.active) return;
+    this.pointerId = e.pointerId;
     (e.target as Element).setPointerCapture(e.pointerId);
+    clearTimeout(this.pressTimer);
+    if (e.pointerType === 'touch') {
+      this.pressAt = [e.clientX, e.clientY];
+      this.pressTimer = window.setTimeout(() => {
+        // 長押し: 描きかけを捨てて、押した場所の図形を消す
+        this.preview.active = false;
+        this.erase(e);
+        navigator.vibrate?.(15);
+      }, LONG_PRESS_MS);
+    }
     const p = this.toWorld(e.clientX, e.clientY);
     this.start = [p.x, p.y];
     this.raw = [[p.x, p.y]];
@@ -148,6 +175,8 @@ export class Input {
   }
 
   private move(e: PointerEvent): void {
+    if (this.preview.active && e.pointerId !== this.pointerId) return;
+    if (Math.hypot(e.clientX - this.pressAt[0], e.clientY - this.pressAt[1]) > LONG_PRESS_SLOP) clearTimeout(this.pressTimer);
     const p = this.toWorld(e.clientX, e.clientY);
     this.setHover(true, p.x, p.y);
     if (!this.preview.active) return;
@@ -156,6 +185,9 @@ export class Input {
   }
 
   private up(e: PointerEvent): void {
+    if (e.pointerId !== this.pointerId) return;
+    clearTimeout(this.pressTimer);
+    this.pointerId = -1;
     if (!this.preview.active || e.button !== 0) return;
     this.move(e);
     this.preview.active = false;
