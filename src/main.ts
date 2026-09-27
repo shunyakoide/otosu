@@ -13,6 +13,7 @@ import {
 } from './ui/storage';
 import { Panel, Popover } from './ui/panel';
 import { ScenesPopover } from './ui/scenes';
+import { ShapeMenu } from './ui/shapeMenu';
 import { Toolbar } from './ui/toolbar';
 
 // 時計は AudioContext の1本（decisions.md D3, D8）。
@@ -144,6 +145,17 @@ const setTool = (t: Tool) => {
   params.tool = t;
   input.setTool(t);
   toolbar.setTool(t);
+};
+// 図形のメニュー（D32）: 長押し・右クリックでエフェクトを付け外し、図形を消す
+const shapeMenu = new ShapeMenu(document.body);
+input.onShapeMenu = (group, x, y) => {
+  const sh = sim.shapes.get(group);
+  if (sh) shapeMenu.open(group, sh.effect, x, y);
+};
+shapeMenu.onChoose = (group, choice, current) => {
+  if (!sim.shapes.has(group)) return;
+  if (choice === 'delete') sim.enqueue({ kind: 'removeShape', group });
+  else sim.enqueue({ kind: 'setEffect', group, effect: choice === current ? 'none' : choice });
 };
 
 // ---- ツールバーと設定パネル（D24） ----
@@ -612,7 +624,7 @@ function frame(now: number): void {
 }
 requestAnimationFrame(frame);
 
-if (import.meta.env.DEV) Object.assign(window, { otosu: { sim, audio, params, midi, renderer } });
+if (import.meta.env.DEV) Object.assign(window, { otosu: { sim, audio, params, midi, renderer, input } });
 
 // ---- 配置の自動保存と URL 共有 ----
 function currentSceneCode(): string {
@@ -638,8 +650,9 @@ setInterval(() => {
     lastPrefs = prefsJson;
     savePrefs(currentPrefs());
   }
-  // 開始前はコマンドが sim に適用されていないので保存しない（空の配置で上書きしてしまう）
-  if (!started) return;
+  // 開始前（と開始直後、まだ1ステップも進んでいない間）はコマンドが sim に適用されていないので保存しない
+  // （空の配置で上書きしてしまう。タブが隠れていると描画ループが止まり、この状態が続く）
+  if (!started || sim.step === 0) return;
   const code = currentSceneCode();
   if (code === lastSaved) return;
   lastSaved = code;

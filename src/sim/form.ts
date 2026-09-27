@@ -1,4 +1,4 @@
-import { SHAPE_FORMS, type ShapeForm } from './types';
+import { SHAPE_EFFECTS, SHAPE_FORMS, type ShapeEffect, type ShapeForm } from './types';
 
 // 図形の形（D16）。保存データに形が無い図形（v2 以前）と、form を省略した addShape のための推定。
 
@@ -13,4 +13,8 @@ export function inferForm(pointCount: number, closed: boolean): ShapeForm {
 
 export function isShapeForm(v: unknown): v is ShapeForm {
   return typeof v === 'string' && (SHAPE_FORMS as readonly string[]).includes(v);
+}
+
+export function isShapeEffect(v: unknown): v is ShapeEffect {
+  return typeof v === 'string' && (SHAPE_EFFECTS as readonly string[]).includes(v);
 }

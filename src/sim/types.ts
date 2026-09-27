@@ -11,6 +11,13 @@ export type ShapeForm = 'line' | 'pen' | 'circle' | 'triangle' | 'square';
 export const SHAPE_FORMS: readonly ShapeForm[] = ['line', 'pen', 'circle', 'triangle', 'square'];
 
 /**
+ * 図形のエフェクト（D32）。当たったあとどうなるか。
+ * echo = 拍の頭で弱くくり返す、rise = 半拍ごとに音階を上がりながらくり返す、chord = 3度・5度上を重ねる
+ */
+export type ShapeEffect = 'none' | 'echo' | 'rise' | 'chord';
+export const SHAPE_EFFECTS: readonly ShapeEffect[] = ['none', 'echo', 'rise', 'chord'];
+
+/**
  * 図形の1辺。図形 = 同じ group を持つ Segment の集まり（D12）。1本の線は辺が1つの図形。
  * 回転は図形の重心 (gx, gy) のまわり。辺の姿勢 = 重心 + R(φ)·(rax..rby)、φ は図形の回転角（描いたとき 0）。
  */
@@ -98,6 +105,8 @@ export type SceneData = {
   shapes: SceneShape[];
   /** shapes と同じ順の形（D16）。無い・長さが合わない・不正な値の要素は点列から推定する（inferForm） */
   forms?: ShapeForm[];
+  /** shapes と同じ順のエフェクト（D32）。無い・長さが合わない・不正な値の要素は none */
+  effects?: ShapeEffect[];
 };
 
 /** 旧形式（ステップ2・3）。読み込みのみ */
@@ -118,6 +127,8 @@ export type Command =
   /** 辺 id を含む図形をまるごと消す */
   | { kind: 'removeSegment'; id: number }
   | { kind: 'removeShape'; group: number }
+  /** 図形のエフェクトを付け替える（D32） */
+  | { kind: 'setEffect'; group: number; effect: ShapeEffect }
   | { kind: 'clearSegments' }
   | { kind: 'setRotation'; on: boolean; speed: number }
   | { kind: 'setTempo'; bpm: number; pattern: readonly number[] }
@@ -145,6 +156,10 @@ export type HitEvent = {
   group: number;
   segKind: SegKind;
   form: ShapeForm;
+  /** 0 = 当たった音、1.. = エフェクト（echo / rise）のくり返し k 回目（D32） */
+  echo: number;
+  /** 0 = 本体、1.. = chord で重ねた音（D32） */
+  voice: number;
   /** そのボールが直前の衝突から 120 ステップ以内に別の図形に当たったら +1、そうでなければ 1 */
   chain: number;
   /** 直近 2 小節の衝突数 / 24（0..1） */
@@ -162,6 +177,7 @@ export type ShapeAddedEvent = {
   midi: number;
   closed: boolean;
   dir: 1 | -1;
+  effect: ShapeEffect;
   /** 重心と、重心からの相対頂点（φ = 0。閉じた図形は最初の点を繰り返さない） */
   gx: number;
   gy: number;
@@ -178,6 +194,7 @@ export type SimEvent =
   | { kind: 'shapePose'; step: number; group: number; theta0: number; rotStartStep: number; omega: number }
   | ShapeAddedEvent
   | { kind: 'shapeRemoved'; step: number; group: number }
+  | { kind: 'shapeEffect'; step: number; group: number; effect: ShapeEffect }
   /** ハーモニー区間の切り替わり（開始時にも1回） */
   | { kind: 'section'; step: number; section: number };
 

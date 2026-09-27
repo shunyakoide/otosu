@@ -139,8 +139,8 @@ export class Toolbar {
     const help = document.createElement('div');
     help.id = 'toolbar-help';
     help.textContent = matchMedia('(hover: none)').matches
-      ? 'drag: draw · long-press: erase'
-      : 'drag: draw · shift: bumper · right-click: erase · space: pause · H: hide ui · , : fine-tune';
+      ? 'drag: draw · long-press a shape: effects / delete'
+      : 'drag: draw · shift: bumper · right-click a shape: effects / delete · space: pause · H: hide ui · , : fine-tune';
     help.classList.add('ui');
     parent.append(this.el, help);
   }

@@ -9,8 +9,8 @@ import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js'
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { closestOnSegment } from '../sim/collide';
 import { BALL_RADIUS, HZ, LINE_WIDTH, MAX_BALLS, MIN_LINE_LEN, WORLD_H, WORLD_W, type Bounds } from '../sim/constants';
-import { lengthToNote } from '../sim/music';
-import type { SegKind, ShapeAddedEvent, ShapeForm, SimEvent, Snapshot } from '../sim/types';
+import { chordSlots, lengthToNote, riseSlot } from '../sim/music';
+import type { SegKind, ShapeAddedEvent, ShapeEffect, ShapeForm, SimEvent, Snapshot } from '../sim/types';
 import { FLOWER_HOLD_SEC, Flowers } from './flowers';
 import { FlowPass } from './flow';
 import { GRAY, noteColor, OFF_WHITE, type ColorMode } from './palette';
@@ -174,6 +174,31 @@ const LEAF_GAIN = 0.32;
 const LEAF_ANGLE = 0.75;
 const VINE_COLOR = new Color(0x6fcf7a);
 
+/**
+ * エフェクトの輪郭（D32）。エフェクトの付いた図形は、まわりに淡い輪郭を何重かまとい、種類ごとに見分けられるよう動きと色を変える。
+ * echo: 同心の輪が外へ広がりながら消えていく（波紋）。rise: 同じ形が上へ昇りながら消えていく（色は上がっていく音の色）。
+ * chord: 動かない点線の輪郭を重ねる（色は重ねる音の色。mono でも点線で分かる）。
+ * 開いた図形（線・ペン）では echo と chord は両側に、rise は上側だけに出す（上へずれるだけの rise と見分けられるように）
+ */
+const FX_ECHO_RINGS = 3;
+const FX_ECHO_GAP = 11;
+const FX_ECHO_SEC = 2.4;
+const FX_RISE_COPIES = 3;
+const FX_RISE_GAP = 9;
+const FX_RISE_SEC = 1.8;
+const FX_CHORD_GAP = 6;
+/** chord の点線: 点の長さ・間隔（px）。mono でも echo・rise と見分けられるように */
+const FX_DOT = 2.5;
+const FX_DOT_GAP = 5;
+/** 輪郭の明るさ（待機の線に対する割合）と太さ（px） */
+const FX_GAIN = 1.6;
+const FX_WIDTH = 1.5;
+/** 当たるたびに輪郭が外へ広がる: 距離・秒・明るさ */
+const FX_WAVE_REACH = 44;
+const FX_WAVE_SEC = 0.9;
+const FX_WAVE_GAIN = 0.9;
+const MAX_FX_WAVES = 64;
+
 /** at = 咲き始めるステップ（落ち始めたら図形に付いて動かすのをやめる） */
 type VineFlower = { handle: number; arc: number; off: number; at: number };
 /** 図形の周上で、花や葉が咲いている場所と期間（ステップ） */
@@ -194,6 +219,7 @@ type Shape = {
   group: number;
   kind: SegKind;
   form: ShapeForm;
+  effect: ShapeEffect;
   note: number;
   closed: boolean;
   /** 重心から頂点までの平均距離（circle のキックの大きさ） */
@@ -215,6 +241,7 @@ type Shape = {
   resV: number;
   replayAt: number;
 };
+type FxWave = { group: number; step: number; v: number };
 type Dying = { shape: Shape; phi: number; step: number; delay: number; dur: number };
 type EmitterView = { x: number; y: number; tx: number; ty: number; pulse: number };
 
@@ -362,6 +389,7 @@ export class Renderer {
   private readonly ballPath = new Map<number, number[]>();
   private readonly emitters = new Map<number, EmitterView>();
   private readonly rippleBuf: Ripple[] = [];
+  private readonly fxWaves: FxWave[] = [];
   private rippleHead = 0;
   private pending: SimEvent[] = [];
 
@@ -560,7 +588,7 @@ export class Renderer {
     for (let i = 0; i < n; i++) radius += Math.hypot(rel[i * 2]!, rel[i * 2 + 1]!);
     radius = n > 0 ? radius / n : 0;
     const shape: Shape = {
-      group: e.group, kind: e.segKind, form: e.form, note: e.note, closed: e.closed, radius, gx: e.gx, gy: e.gy,
+      group: e.group, kind: e.segKind, form: e.form, effect: e.effect, note: e.note, closed: e.closed, radius, gx: e.gx, gy: e.gy,
       rel, n, s0, elen, perimeter: p,
       theta0: 0, rotStartStep: e.step, omega: 0,
       hit: null,
@@ -677,7 +705,18 @@ export class Renderer {
   }
 
   private onHit(e: Extract<SimEvent, { kind: 'hit' }>): void {
+    // chord で重ねた音は光らせない（本体の音が光る）
+    if (e.voice > 0) return;
     const s = this.shapes.get(e.group);
+    if (s && s.effect !== 'none') {
+      if (this.fxWaves.length >= MAX_FX_WAVES) this.fxWaves.shift();
+      this.fxWaves.push({ group: s.group, step: e.step, v: e.velocity });
+    }
+    // くり返し（echo / rise）: 図形が弱く光り、輪郭が広がるだけ（花・波紋・ボール・連鎖には数えない）
+    if (e.echo > 0) {
+      if (s) this.trigger(s, e.step, e.velocity, e.form === 'circle' ? 0 : this.arcPos(s, e.step, e.x, e.y));
+      return;
+    }
     // circle は図形全体が光る（打点は使わない）
     if (s) this.trigger(s, e.step, e.velocity, e.form === 'circle' ? 0 : this.arcPos(s, e.step, e.x, e.y));
 
@@ -763,6 +802,11 @@ export class Renderer {
         case 'shapeAdded':
           this.addShape(e);
           break;
+        case 'shapeEffect': {
+          const s = this.shapes.get(e.group);
+          if (s) s.effect = e.effect;
+          break;
+        }
         case 'shapePose': {
           const s = this.shapes.get(e.group);
           if (s) {
@@ -812,6 +856,10 @@ export class Renderer {
     for (const e of this.pending) {
       if (e.kind === 'shapeAdded') this.addShape(e);
       else if (e.kind === 'shapeRemoved') this.dropShape(e.group);
+      else if (e.kind === 'shapeEffect') {
+        const s = this.shapes.get(e.group);
+        if (s) s.effect = e.effect;
+      }
       else if (e.kind === 'shapePose') {
         const s = this.shapes.get(e.group);
         if (s) {
@@ -1026,6 +1074,98 @@ export class Renderer {
     return v;
   }
 
+  /** エフェクトの付いた図形がいつもまとう輪郭（D32）。a = 一番明るい輪郭の明るさ */
+  private drawFxRings(s: Shape, phi: number, rs: number, a: number, mode: ColorMode, tint: Color): void {
+    const t = rs / HZ;
+    if (s.effect === 'echo') {
+      // 等間隔の輪が外へ流れ、外ほど暗く、端で消える
+      tint.copy(noteColor(s.note, mode));
+      const p = (t / FX_ECHO_SEC) % 1;
+      for (let i = 0; i < FX_ECHO_RINGS; i++) {
+        const u = (i + p) / FX_ECHO_RINGS;
+        const fade = Math.min(1, u * 4) * (1 - u) ** 1.5;
+        this.drawFxSides(s, phi, 4 + u * FX_ECHO_RINGS * FX_ECHO_GAP, tint, a * fade);
+      }
+    } else if (s.effect === 'rise') {
+      // 同じ形が上へ昇り、上ほど暗く、上がっていく音の色になる
+      const p = (t / FX_RISE_SEC) % 1;
+      for (let i = 0; i < FX_RISE_COPIES; i++) {
+        const u = (i + p) / FX_RISE_COPIES;
+        const n = riseSlot(s.form, s.note, i + 1);
+        tint.copy(noteColor(n < 0 ? s.note : n, mode));
+        const fade = Math.min(1, u * 4) * (1 - u) ** 1.5;
+        this.drawOutline(this.contour(s, phi, 0, 4 + u * FX_RISE_COPIES * FX_RISE_GAP), s.n, s.closed, false, tint, FX_WIDTH, a * fade, 0, 1, 0, 0);
+      }
+    } else if (s.effect === 'chord') {
+      // 重ねる音の色の細い輪郭が、ぴったり寄り添って動かない
+      chordSlots(s.form, s.note).forEach((n, i) => {
+        tint.copy(noteColor(n, mode));
+        this.drawFxSides(s, phi, FX_CHORD_GAP * (i + 1), tint, a * (i === 0 ? 1.3 : 1), true);
+      });
+    }
+  }
+
+  /** 外へ d px の輪郭（dotted なら点線）。開いた図形は両側に */
+  private drawFxSides(s: Shape, phi: number, d: number, tint: Color, a: number, dotted = false): void {
+    const draw = (v: Float32Array) => dotted
+      ? this.drawDotted(v, s.n, s.closed, tint, a)
+      : this.drawOutline(v, s.n, s.closed, false, tint, FX_WIDTH, a, 0, 1, 0, 0);
+    draw(this.contour(s, phi, d, 0));
+    if (!s.closed) draw(this.contour(s, phi, -d, 0));
+  }
+
+  /** 点線の輪郭。周に沿って FX_DOT の点を FX_DOT_GAP おきに置く */
+  private drawDotted(v: Float32Array, n: number, closed: boolean, tint: Color, a: number): void {
+    const k = this.thick;
+    const ne = closed ? n : n - 1;
+    const period = FX_DOT + FX_DOT_GAP;
+    let acc = 0;
+    for (let i = 0; i < ne; i++) {
+      const j = (i + 1) % n;
+      const ax = v[i * 2]!, ay = v[i * 2 + 1]!;
+      const dx = v[j * 2]! - ax, dy = v[j * 2 + 1]! - ay;
+      const len = Math.hypot(dx, dy);
+      if (len <= 0) continue;
+      // この辺の中で、次の点が始まる位置から置いていく（辺をまたいでも間隔がそろうように）
+      for (let t = (period - (acc % period)) % period; t < len; t += period) {
+        const t1 = Math.min(len, t + FX_DOT);
+        this.putEdge(ax + dx * t / len, ay + dy * t / len, ax + dx * t1 / len, ay + dy * t1 / len, 2 * k, tint,
+          0, 1, 0, 0, a, 0, 1, 0);
+      }
+      acc += len;
+    }
+  }
+
+  /**
+   * 図形を外へ d px 広げ、上へ lift px ずらした輪郭（D32）。閉じた図形は重心から拡大、
+   * 開いた図形（線・ペン）は両端を結ぶ向きに垂直な、上側へ平行にずらす
+   */
+  private contour(s: Shape, phi: number, d: number, lift: number): Float32Array {
+    const v = this.pose(s, phi, s.closed ? 1 + d / Math.max(s.radius, 8) : 1);
+    let ox = 0;
+    let oy = -lift;
+    if (!s.closed && s.n >= 2) {
+      const ex = v[(s.n - 1) * 2]! - v[0]!;
+      const ey = v[(s.n - 1) * 2 + 1]! - v[1]!;
+      const l = Math.hypot(ex, ey) || 1;
+      let nx = -ey / l;
+      let ny = ex / l;
+      if (ny > 0) {
+        nx = -nx;
+        ny = -ny;
+      }
+      ox += nx * d;
+      oy += ny * d;
+    }
+    if (ox !== 0 || oy !== 0) {
+      for (let i = 0; i < s.n; i++) {
+        v[i * 2] += ox;
+        v[i * 2 + 1] += oy;
+      }
+    }
+    return v;
+  }
+
   /** 辺を1本置く（弦のパラメータ付き） */
   private putEdge(
     ax: number, ay: number, bx: number, by: number, width: number, tint: Color,
@@ -1191,7 +1331,34 @@ export class Renderer {
         const ve = this.pose(s, phi, echoK);
         this.drawOutline(ve, s.n, s.closed, false, tint, 1, echo, 0, 1, 0, 0);
       }
+      if (s.effect !== 'none') this.drawFxRings(s, phi, rs, idle * FX_GAIN, mode, tint);
     }
+
+    // 当たるたびに外へ広がる輪郭（D32）。rise は上へ昇り、chord は重ねる音の色で広がる
+    let w = 0;
+    for (const f of this.fxWaves) {
+      const q = (rs - f.step) / HZ / FX_WAVE_SEC;
+      const s = this.shapes.get(f.group);
+      if (q >= 1 || !s) continue;
+      this.fxWaves[w++] = f;
+      if (q < 0 || s.effect === 'none') continue;
+      const e = easeOutCubic(q);
+      const a = FX_WAVE_GAIN * (0.3 + f.v) * (1 - q) ** 2;
+      const phi = shapeAngle(s, rs);
+      if (s.effect === 'rise') {
+        tint.copy(noteColor(Math.max(riseSlot(s.form, s.note, 1), s.note), mode));
+        this.drawOutline(this.contour(s, phi, 0, FX_WAVE_REACH * e), s.n, s.closed, false, tint, FX_WIDTH, a, 0, 1, 0, 0);
+      } else if (s.effect === 'chord') {
+        chordSlots(s.form, s.note).forEach((n, i) => {
+          tint.copy(noteColor(n, mode));
+          this.drawFxSides(s, phi, 3 + (0.5 + 0.5 * i) * FX_WAVE_REACH * e, tint, a, true);
+        });
+      } else {
+        tint.copy(noteColor(s.note, mode));
+        this.drawFxSides(s, phi, 3 + FX_WAVE_REACH * e, tint, a);
+      }
+    }
+    this.fxWaves.length = w;
 
     // 消えかけの図形: 遅延のあいだは待機の明るさ、その後 0.8·(1−p)² で消しながら重心へ 10% 縮める
     for (const [id, d] of this.dying) {

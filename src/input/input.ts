@@ -3,7 +3,7 @@ import { lengthToNote } from '../sim/music';
 import { normalizePoints, type Sim } from '../sim/sim';
 import type { Preview } from '../render/render';
 
-// ツールで図形を描く／右クリック（タッチでは長押し）で図形を消す。座標はすべて論理ワールド座標（D8-7）。
+// ツールで図形を描く／右クリック（タッチでは長押し）で図形のメニューを開く（エフェクト・削除、D32）。座標はすべて論理ワールド座標（D8-7）。
 // 消去とホバーの判定は描画側（表示中の図形・描画中の時刻の姿勢）に任せる（B3, D12）。
 
 export type Tool = 'line' | 'pen' | 'circle' | 'triangle' | 'square';
@@ -14,7 +14,7 @@ export type ShapePicker = (x: number, y: number) => number;
 
 /** カーソルが隠れるのと同じ時間でホバー予告も消す（投影時に予告だけ光り続けないように） */
 const HOVER_IDLE_MS = 2000;
-/** タッチ: この時間ほぼ動かさずに押し続けると、その場所の図形を消す（右クリックの代わり） */
+/** タッチ: この時間ほぼ動かさずに押し続けると、その場所の図形のメニューを開く（右クリックの代わり） */
 const LONG_PRESS_MS = 550;
 /** 長押しとみなす指のぶれ（CSS px） */
 const LONG_PRESS_SLOP = 10;
@@ -84,6 +84,8 @@ export class Input {
   };
   /** ドラッグ中に音程スロットが変わったとき（有効な長さに入ったときも）に呼ぶ。main がティック音を鳴らす */
   onPreviewNote: ((slot: number) => void) | null = null;
+  /** 図形を長押し・右クリックしたときに呼ぶ（x, y は画面の座標）。main がメニューを開く */
+  onShapeMenu: ((group: number, x: number, y: number) => void) | null = null;
 
   private tool: Tool = 'line';
   private readonly sim: Sim;
@@ -125,7 +127,7 @@ export class Input {
     el.addEventListener('contextmenu', (e) => {
       e.preventDefault();
       // タッチの長押しでも contextmenu が来る（Android）。そちらは長押しの処理に任せる
-      if (this.lastPointerType !== 'touch') this.erase(e);
+      if (this.lastPointerType !== 'touch') this.menu(e);
     });
     // ドラッグ中に Shift を押す／離すだけでもプレビューを切り替える
     addEventListener('keydown', (e) => e.key === 'Shift' && (this.preview.bumper = true));
@@ -159,10 +161,9 @@ export class Input {
     if (e.pointerType === 'touch') {
       this.pressAt = [e.clientX, e.clientY];
       this.pressTimer = window.setTimeout(() => {
-        // 長押し: 描きかけを捨てて、押した場所の図形を消す
+        // 長押し: 描きかけを捨てて、押した場所の図形のメニューを開く
         this.preview.active = false;
-        this.erase(e);
-        navigator.vibrate?.(15);
+        if (this.menu(e)) navigator.vibrate?.(15);
       }, LONG_PRESS_MS);
     }
     const p = this.toWorld(e.clientX, e.clientY);
@@ -254,9 +255,12 @@ export class Input {
     }
   }
 
-  private erase(e: MouseEvent): void {
+  /** 押した場所に図形があればメニューを開く */
+  private menu(e: MouseEvent): boolean {
     const p = this.toWorld(e.clientX, e.clientY);
     const group = this.pick(p.x, p.y);
-    if (group >= 0) this.sim.enqueue({ kind: 'removeShape', group });
+    if (group < 0) return false;
+    this.onShapeMenu?.(group, e.clientX, e.clientY);
+    return true;
   }
 }

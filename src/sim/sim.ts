@@ -1,15 +1,15 @@
 import { closestOnSegment, rayCapsule, type Hit } from './collide';
 import {
-  BALL_LINE_COOLDOWN, BUMPER_MAX_SPEED, BUMPER_RESTITUTION, CHAIN_WINDOW, DRIFT_AMP_DEFAULT, DRIFT_AMP_MAX,
-  DRIFT_PERIOD, DT, ENERGY_HITS, G, HISTORY, HIT_RADIUS, HZ, LINE_COOLDOWN, MAX_AGE_STEPS, MAX_BALLS, MAX_SEGS,
+  BALL_LINE_COOLDOWN, BUMPER_MAX_SPEED, BUMPER_RESTITUTION, CHAIN_WINDOW, CHORD_GAIN, DRIFT_AMP_DEFAULT, DRIFT_AMP_MAX,
+  DRIFT_PERIOD, DT, ECHO_BEATS, ECHO_COUNT, ECHO_DECAY, ENERGY_HITS, G, HISTORY, HIT_RADIUS, HZ, LINE_COOLDOWN, MAX_AGE_STEPS, MAX_BALLS, MAX_SEGS,
   MAX_SHAPE_EDGES, MIN_LINE_LEN, PHRASE_LEN, REST_VN, RESTITUTION, SECTION_BARS, STALL_SPEED, STALL_STEPS,
-  PLACE_BOUNDS, TANGENT_KEEP, V_MIN, WORLD_BOUNDS, WORLD_W, impactVelocity, maxOmega, type Bounds,
+  PLACE_BOUNDS, RISE_BEATS, RISE_COUNT, RISE_DECAY, TANGENT_KEEP, V_MIN, WORLD_BOUNDS, WORLD_W, impactVelocity, maxOmega, type Bounds,
 } from './constants';
 import { inferForm } from './form';
-import { formMidi, lengthToNote, sectionAt, sectionSteps } from './music';
+import { chordSlots, formMidi, lengthToNote, riseSlot, sectionAt, sectionSteps } from './music';
 import type {
-  Ball, Command, DriftMode, Emitter, HitEvent, SceneData, SegKind, Segment, ShapeAddedEvent, ShapeForm, SimEvent,
-  Snapshot,
+  Ball, Command, DriftMode, Emitter, HitEvent, SceneData, SegKind, Segment, ShapeAddedEvent, ShapeEffect, ShapeForm,
+  SimEvent, Snapshot,
 } from './types';
 
 const MAX_BOUNCES_PER_STEP = 4;
@@ -73,6 +73,8 @@ export type Shape = {
   kind: SegKind;
   /** 形（D16）。音色が決まる */
   form: ShapeForm;
+  /** エフェクト（D32） */
+  effect: ShapeEffect;
   dir: 1 | -1;
   closed: boolean;
   /** 描いたときの頂点（整数 px）。保存用 */
@@ -165,6 +167,11 @@ export class Sim {
   private lastSection = -1;
   /** energy 用: 直近の衝突イベントのステップ（古い順） */
   private recentHits: number[] = [];
+  /**
+   * echo / rise のくり返し（D32）。group → 当たった音の写しと、次に出す回数・ステップ。
+   * 1つの図形のくり返しは常に1列（また当たったら、その音から数え直す）。Map の挿入順で出すので決定論的
+   */
+  private repeats = new Map<number, { ev: HitEvent; k: number; step: number }>();
   private readonly history: Snapshot[] = [];
   private readonly hit: Hit = { t: 0, nx: 0, ny: 0 };
   private readonly near = { dist: 0, nx: 0, ny: 0 };
@@ -230,6 +237,7 @@ export class Sim {
     this.updatePoses(s);
     this.emit(s);
     this.integrate(s);
+    this.flushRepeats(s);
     this.cull(s);
     this.record(s);
     this.step = s + 1;
@@ -256,6 +264,14 @@ export class Sim {
         case 'removeShape':
           this.removeShape(s, cmd.group);
           break;
+        case 'setEffect': {
+          const sh = this.shapes.get(cmd.group);
+          if (!sh || sh.effect === cmd.effect) break;
+          sh.effect = cmd.effect;
+          this.repeats.delete(cmd.group);
+          this.events.push({ kind: 'shapeEffect', step: s, group: cmd.group, effect: cmd.effect });
+          break;
+        }
         case 'clearSegments':
           this.clearShapes(s);
           break;
@@ -295,6 +311,7 @@ export class Sim {
     let w = 0;
     for (const seg of this.segments) if (seg.group !== group) this.segments[w++] = seg;
     this.segments.length = w;
+    this.repeats.delete(group);
     this.events.push({ kind: 'shapeRemoved', step: s, group });
   }
 
@@ -302,6 +319,7 @@ export class Sim {
     for (const group of this.shapes.keys()) this.events.push({ kind: 'shapeRemoved', step: s, group });
     this.shapes.clear();
     this.segments.length = 0;
+    this.repeats.clear();
   }
 
   private setTempo(s: number, bpm: number, pattern: readonly number[]): void {
@@ -312,6 +330,21 @@ export class Sim {
     this.pattern = [...pattern];
     this.sectionLen = sectionSteps(bpm, SECTION_BARS, HZ);
     this.setupEmitters(bpm, pattern, s);
+    // 残りのくり返しは新しい格子（s から始まる）に取り直す
+    for (const r of this.repeats.values()) r.step = this.gridAtOrAfter(s, this.repeatBeats(r.ev));
+  }
+
+  /** 格子 harmonyAnchor + round(k·beats·HZ·60/bpm) のうち、c 以上で最初のステップ（放出の格子と同じ式） */
+  gridAtOrAfter(c: number, beats: number): number {
+    const a = this.harmonyAnchor;
+    const p = (beats * HZ * 60) / this.bpm;
+    let k = Math.max(0, Math.ceil((c - a) / p) - 1);
+    while (a + Math.round(k * p) < c) k++;
+    return a + Math.round(k * p);
+  }
+
+  private repeatBeats(ev: HitEvent): number {
+    return this.shapes.get(ev.group)?.effect === 'rise' ? RISE_BEATS : ECHO_BEATS;
   }
 
 
@@ -338,14 +371,14 @@ export class Sim {
       const pts: [number, number][] = [];
       for (let j = 0; j + 1 < flat.length; j += 2) pts.push([flat[j]!, flat[j + 1]!]);
       // 形は forms から（無ければ addShape が点列から推定する。D18）
-      this.addShape(s, pts, closed, kind, dir, scene.forms?.[i]);
+      this.addShape(s, pts, closed, kind, dir, scene.forms?.[i], scene.effects?.[i]);
     });
   }
 
   /** 図形を追加する。座標は整数 px に丸める（ライブと読み込み後で同じ状態にするため） */
   private addShape(
     s: number, raw: readonly (readonly [number, number])[], closed: boolean, kind: SegKind, dir?: 1 | -1,
-    formIn?: ShapeForm,
+    formIn?: ShapeForm, effect: ShapeEffect = 'none',
   ): void {
     const points = normalizePoints(raw, closed);
     if (!points) return;
@@ -376,7 +409,7 @@ export class Sim {
     const group = this.nextGroupId++;
     const note = lengthToNote(perimeter).index;
     const shape: Shape = {
-      group, kind, form, closed, points, gx, gy, radius, perimeter, note,
+      group, kind, form, effect, closed, points, gx, gy, radius, perimeter, note,
       dir: dir ?? (group % 2 === 0 ? 1 : -1),
       segs: [],
       theta0: 0,
@@ -420,6 +453,7 @@ export class Sim {
       midi: formMidi(form, note, this.sectionAt(s)),
       closed,
       dir: shape.dir,
+      effect,
       gx, gy,
       points: points.map(([x, y]) => [x - gx, y - gy] as [number, number]),
       // 描画は自分用のコピーを持つ（D9）ので、この時点の値を渡す
@@ -646,11 +680,59 @@ export class Sim {
       group: seg.group,
       segKind: seg.kind,
       form: sh.form,
+      echo: 0,
+      voice: 0,
       chain: b.chain,
       energy: Math.min(1, hits.length / ENERGY_HITS),
     };
     this.events.push(ev);
+    this.applyEffect(s, sh, ev);
     return true;
+  }
+
+  /**
+   * 当たった音へのエフェクト（D32）。chord は同じステップに重ねる音を出す。echo / rise はくり返しを予約する:
+   * 最初は格子の半分以上あけた次の格子（当たった音とくっつかないように）。同じ図形の残りは捨てて数え直す
+   */
+  private applyEffect(s: number, sh: Shape, ev: HitEvent): void {
+    if (sh.effect === 'chord') {
+      chordSlots(sh.form, sh.note).forEach((note, i) => {
+        this.events.push({
+          ...ev, voice: i + 1, note, midi: formMidi(sh.form, note, ev.section), velocity: ev.velocity * CHORD_GAIN,
+        });
+      });
+    } else if (sh.effect === 'echo' || sh.effect === 'rise') {
+      const beats = sh.effect === 'rise' ? RISE_BEATS : ECHO_BEATS;
+      const gap = Math.ceil((beats * HZ * 60) / this.bpm / 2);
+      this.repeats.delete(sh.group);
+      this.repeats.set(sh.group, { ev: { ...ev }, k: 1, step: this.gridAtOrAfter(s + gap, beats) });
+    }
+  }
+
+  /**
+   * 時刻の来たくり返しを出す（D32）。区間と音高は鳴らすステップで決め直す。
+   * 出すイベントの step はすべて s（drainEvents の順序は崩れない）。chain・energy には数えない
+   */
+  private flushRepeats(s: number): void {
+    if (this.repeats.size === 0) return;
+    for (const [group, r] of this.repeats) {
+      if (r.step > s) continue;
+      const sh = this.shapes.get(group);
+      const rise = sh?.effect === 'rise';
+      const note = rise ? riseSlot(r.ev.form, r.ev.note, r.k) : r.ev.note;
+      if (!sh || note < 0) {
+        this.repeats.delete(group);
+        continue;
+      }
+      const section = this.sectionAt(s);
+      this.events.push({
+        ...r.ev, step: s, echo: r.k, note, section, midi: formMidi(r.ev.form, note, section),
+        velocity: r.ev.velocity * Math.pow(rise ? RISE_DECAY : ECHO_DECAY, r.k),
+      });
+      r.k++;
+      if (r.k > (rise ? RISE_COUNT : ECHO_COUNT)) this.repeats.delete(group);
+      else r.step = this.gridAtOrAfter(s + 1, rise ? RISE_BEATS : ECHO_BEATS);
+    }
   }
 
 

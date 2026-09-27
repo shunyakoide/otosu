@@ -56,6 +56,17 @@ export const MAX_AGE_STEPS = HZ * 20;
 export const STALL_SPEED = 5;
 export const STALL_STEPS = HZ;
 
+/** エフェクト（D32）。echo: 拍の頭で ECHO_COUNT 回、velocity は ECHO_DECAY の累乗 */
+export const ECHO_COUNT = 3;
+export const ECHO_BEATS = 1;
+export const ECHO_DECAY = 0.55;
+/** rise: 半拍ごとに RISE_COUNT 回、1回ごとにスロットを1つ（circle は1帯 = 5）上げる。一番上で止まる */
+export const RISE_COUNT = 4;
+export const RISE_BEATS = 0.5;
+export const RISE_DECAY = 0.8;
+/** chord: 重ねる音の velocity の倍率 */
+export const CHORD_GAIN = 0.7;
+
 /** 描画用の位置履歴（ステップ数） */
 export const HISTORY = 96;
 

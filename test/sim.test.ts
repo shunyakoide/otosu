@@ -673,3 +673,80 @@ describe('scene forms (D18)', () => {
     expect([...sim.shapes.values()].map((sh) => sh.form)).toEqual(['triangle']);
   });
 });
+
+describe('shape effects (D32)', () => {
+  /** 放出口の真下に線を1本。エフェクトを付けて返す */
+  const one = (effect: 'none' | 'echo' | 'rise' | 'chord', form: ShapeForm = 'line') => {
+    const sim = new Sim({ bpm: 90, pattern: [4], drift: { mode: 'off', amp: 0 } });
+    sim.enqueue({ kind: 'addShape', points: [[860, 600], [1060, 640]], closed: false, segKind: 'line', form });
+    run(sim, 1);
+    sim.enqueue({ kind: 'setEffect', group: 1, effect });
+    return sim;
+  };
+  const beat = (HZ * 60) / 90;
+
+  it('does not change the physics or the direct hits', () => {
+    const key = (hs: HitEvent[]) => hs.filter((h) => h.echo === 0 && h.voice === 0).map((h) => `${h.step}/${h.velocity}`);
+    const plain = key(hitsOf(run(one('none'), 120 * 20)));
+    expect(plain.length).toBeGreaterThan(5);
+    for (const fx of ['echo', 'rise', 'chord'] as const) expect(key(hitsOf(run(one(fx), 120 * 20)))).toEqual(plain);
+  });
+
+  it('echo repeats on the following beats, quieter each time', () => {
+    const hs = hitsOf(run(one('echo'), 120 * 6));
+    const hit = hs.find((h) => h.echo === 0)!;
+    const echoes = hs.filter((h) => h.echo > 0 && h.step < hit.step + 4 * beat + 1);
+    expect(echoes.map((h) => h.echo)).toEqual([1, 2, 3]);
+    for (const e of echoes) {
+      expect(Math.abs(e.step / beat - Math.round(e.step / beat))).toBeLessThan(1e-9 + 0.5 / beat);
+      expect(e.step - hit.step).toBeGreaterThanOrEqual(beat / 2);
+      expect(e.note).toBe(hit.note);
+      expect(e.velocity).toBeLessThan(hit.velocity);
+    }
+  });
+
+  it('rise climbs the scale and stops at the top', () => {
+    const hs = hitsOf(run(one('rise'), 120 * 6));
+    const hit = hs.find((h) => h.echo === 0)!;
+    const rise = hs.filter((h) => h.echo > 0 && h.step < hit.step + 3 * beat);
+    expect(rise.map((h) => h.note)).toEqual(rise.map((_, i) => hit.note + i + 1));
+    expect(rise.length).toBeGreaterThan(0);
+    for (const h of rise) expect(h.midi).toBe(formMidi('line', h.note, h.section));
+  });
+
+  it('chord adds two voices at the same step', () => {
+    const hs = hitsOf(run(one('chord'), 120 * 6));
+    const hit = hs.find((h) => h.voice === 0)!;
+    const same = hs.filter((h) => h.step === hit.step);
+    expect(same.map((h) => h.voice)).toEqual([0, 1, 2]);
+    expect(new Set(same.map((h) => h.midi)).size).toBe(3);
+  });
+
+  it('drops pending repeats when the effect changes or the shape goes', () => {
+    for (const cmd of [{ kind: 'setEffect', group: 1, effect: 'none' }, { kind: 'removeShape', group: 1 }] as const) {
+      const sim = one('echo');
+      while (!hitsOf(run(sim, 1)).length);
+      sim.enqueue(cmd);
+      expect(hitsOf(run(sim, Math.round(beat * 2))).filter((h) => h.echo > 0)).toEqual([]);
+    }
+  });
+
+  it('round-trips effects through the scene and stays deterministic', () => {
+    const src = one('rise', 'circle');
+    run(src, 1);
+    const scene = sceneFromSim(src);
+    expect(scene.effects).toEqual(['rise']);
+    const back = decodeScene(encodeScene(scene))!;
+    expect(back.effects).toEqual(['rise']);
+    const a = new Sim({ bpm: 90, pattern: [4] });
+    a.enqueue({ kind: 'loadScene', scene: back });
+    const b = new Sim({ bpm: 90, pattern: [4] });
+    b.enqueue({ kind: 'loadScene', scene: back });
+    expect(JSON.stringify(run(a, 3000))).toBe(JSON.stringify(run(b, 3000)));
+    // エフェクトが無ければ書かない。不正な値は none
+    expect(sceneFromSim(one('none')).effects).toBeUndefined();
+    const seg = ['line', 1, false, 100, 100, 400, 100];
+    const base = { v: 2, bpm: 90, pattern: [2], rotate: false, rotationSpeed: 0.3, drift: { mode: 'off', amp: 0 } };
+    expect(validateScene({ ...base, shapes: [seg, seg], effects: ['echo', 'reverb'] })!.effects).toEqual(['echo', 'none']);
+  });
+});

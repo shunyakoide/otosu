@@ -83,3 +83,30 @@ export function kickMidi(slot: number, section: number): number {
 export function formMidi(form: string, slot: number, section: number): number {
   return form === 'circle' ? kickMidi(slot, section) : midiAt(slot, section);
 }
+
+// ---- エフェクトの音高（D32） ----
+
+/** 1段上がるときのスロットの幅: circle は音高が5スロットごとの帯で決まるので1帯、ほかは音階の1音 */
+export function slotStep(form: string): number {
+  return form === 'circle' ? 5 : 1;
+}
+
+/** rise の k 回目のスロット。一番上（NOTE_COUNT − 1）を超えたら -1（そこで止める） */
+export function riseSlot(form: string, slot: number, k: number): number {
+  const n = slot + k * slotStep(form);
+  return n < NOTE_COUNT ? n : -1;
+}
+
+/**
+ * chord で重ねるスロット。ペンタトニックで2つ上（3度前後）と3つ上（5度前後）、circle は1帯・2帯上（キック + タム）。
+ * 上に収まらない音は同じだけ下に取る
+ */
+export function chordSlots(form: string, slot: number): number[] {
+  const offs = form === 'circle' ? [5, 10] : [2, 3];
+  const out: number[] = [];
+  for (const o of offs) {
+    const n = slot + o < NOTE_COUNT ? slot + o : slot - o;
+    if (n >= 0 && !out.includes(n)) out.push(n);
+  }
+  return out;
+}
