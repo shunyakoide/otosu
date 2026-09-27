@@ -311,11 +311,10 @@ function frame(now: number): void {
   for (const e of sim.drainEvents()) {
     const time = t0 + e.step / HZ;
     if (e.kind === 'hit') {
-      // こだま（D21）は内蔵音と光だけ。MIDI・録音には当たった音だけを送る（DAW 側のディレイに任せる）
-      if (!e.echo) midi.record(e); // 録音は step 基準なので、遅れて捨てる衝突も入れる
+      midi.record(e); // 録音は step 基準なので、遅れて捨てる衝突も入れる
       if (time < ct - LATE_DROP) continue; // 音も光も捨てる
       if (params.internalSound) audio.play(e, Math.max(time, ct));
-      if (!params.muted && !e.echo) midi.play(e, Math.max(time, ct), toPerf);
+      if (!params.muted) midi.play(e, Math.max(time, ct), toPerf);
     } else if (e.kind === 'section') {
       audio.setSection(e.section, Math.max(time, ct));
     } else if (e.kind === 'shapeAdded') {

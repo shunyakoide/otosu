@@ -69,6 +69,3 @@ export function maxOmega(halfLen: number): number {
   return (0.9 * HIT_RADIUS * HZ) / Math.max(halfLen, 1);
 }
 
-/** circle のこだま（D21）: 接触後の拍の頭で鳴らす回数と、1回ごとの velocity の倍率 */
-export const ECHO_COUNT = 2;
-export const ECHO_DECAY = 0.5;

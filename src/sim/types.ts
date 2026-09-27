@@ -124,12 +124,7 @@ export type Command =
 
 export type HitEvent = {
   kind: 'hit';
-  /** 鳴らすステップ（音・光・MIDI・録音はすべてこの時刻）。circle のこだまは拍の頭（D21） */
   step: number;
-  /** ボールが実際に当たったステップ（こだま以外は step と同じ） */
-  contactStep: number;
-  /** 0 = 当たった音そのもの。1.. = circle のこだま（接触後の拍の頭で、だんだん弱く。MIDI・録音には入れない。D21） */
-  echo: number;
   ballId: number;
   lineId: number;
   x: number;
@@ -138,7 +133,7 @@ export type HitEvent = {
   velocity: number;
   /** 線に固定された音程スロット 0..15（色もこれで決まる） */
   note: number;
-  /** 実際に鳴らす音高。ハーモニーの区間で動く。circle は区間の根音（kickMidi）。こだまは鳴らすステップの区間で決め直す */
+  /** 実際に鳴らす音高。ハーモニーの区間で動く。circle は区間の根音（kickMidi） */
   midi: number;
   /** ハーモニー進行の区間番号 */
   section: number;

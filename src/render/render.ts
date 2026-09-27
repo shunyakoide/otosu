@@ -78,7 +78,7 @@ const EMITTER_TAU = 0.2;
 const BUMPER_OFFSET = 2.5;
 const BUMPER_WIDTH = 2;
 
-// 形ごとの光（D16）。音と光は 1:1: 光るのは HitEvent の step（circle は拍の頭）だけ
+// 形ごとの光（D16）。音と光は 1:1: 光るのは HitEvent の step だけ
 // circle（キック）: 図形全体が脈打つ（速い立ち上がり → 減衰）＋重心から輪が広がる。大きい円ほどゆっくり大きく
 const KICK_ATTACK = 0.015;
 /** 脈の減衰の時定数: 小さい円 KICK_DECAY_MIN → 半径 KICK_BIG_R 以上で +KICK_DECAY_BIG */
@@ -121,8 +121,7 @@ const WOOD_ECHO_SEC = 0.12;
 const WOOD_ECHO_GROW = 0.06;
 const WOOD_RIPPLE_SEC = 0.18;
 
-/** flash: 衝突の瞬間にボール自身が光る強さ（circle のキックは拍で図形が光るので 0） */
-type BallLook = { note: number; step: number; v: number; chain: number; flash: number };
+type BallLook = { note: number; step: number; v: number; chain: number };
 /** 波紋: 半径 r0 から grow だけ dur 秒で広がる。明るさ gain·(1−p)² */
 type Ripple = { x: number; y: number; step: number; note: number; r0: number; grow: number; dur: number; gain: number };
 type Hit = { step: number; v: number; s: number; tau: number };
@@ -556,13 +555,8 @@ export class Renderer {
 
   private onHit(e: Extract<SimEvent, { kind: 'hit' }>): void {
     const s = this.shapes.get(e.group);
-    // こだま（D21）: 図形の脈と輪だけ（velocity は減衰済みなので弱い）。ボール・連鎖・共鳴・盛り上がりは動かさない
-    if (e.echo) {
-      if (s) this.trigger(s, e.step, e.velocity, 0);
-      return;
-    }
     // circle は図形全体が光る（打点は使わない）
-    if (s) this.trigger(s, e.step, e.velocity, e.form === 'circle' ? 0 : this.arcPos(s, e.contactStep, e.x, e.y));
+    if (s) this.trigger(s, e.step, e.velocity, e.form === 'circle' ? 0 : this.arcPos(s, e.step, e.x, e.y));
 
     // 共鳴: 同じスロットの他の図形がほのかに光る（D11）
     for (const o of this.shapes.values()) {
@@ -572,7 +566,7 @@ export class Renderer {
       }
     }
 
-    this.ballLook.set(e.ballId, { note: e.note, step: e.step, v: e.velocity, chain: e.chain, flash: 1 });
+    this.ballLook.set(e.ballId, { note: e.note, step: e.step, v: e.velocity, chain: e.chain });
 
     // 連鎖: 通った図形を覚え、5 連鎖（以後 3 つごと）で順に光らせ直す
     let path = this.ballPath.get(e.ballId);
@@ -716,9 +710,9 @@ export class Renderer {
 
   /** ステップ s 時点のボールの強度（衝突直後に明るく、指数で減衰） */
   private ballIntensity(look: BallLook | undefined, s: number): number {
-    if (!look || s < look.step || look.flash <= 0) return 0.55;
+    if (!look || s < look.step) return 0.55;
     const t = (s - look.step) / HZ;
-    return 0.55 + look.flash * (1.0 + 1.5 * look.v) * Math.exp(-t / 0.09);
+    return 0.55 + (1.0 + 1.5 * look.v) * Math.exp(-t / 0.09);
   }
 
   private ballColor(look: BallLook | undefined): Color {
@@ -749,7 +743,7 @@ export class Renderer {
         }
         const look = this.ballLook.get(id);
         let scale = BALL_RADIUS;
-        if (look && rs >= look.step) scale *= 1 + 0.35 * look.flash * Math.exp(-(rs - look.step) / HZ / 0.06);
+        if (look && rs >= look.step) scale *= 1 + 0.35 * Math.exp(-(rs - look.step) / HZ / 0.06);
         d.position.set(x, -y, 0);
         d.rotation.set(0, 0, 0);
         d.scale.set(scale, scale, 1);
