@@ -1,4 +1,3 @@
-import GUI from 'lil-gui';
 import { Audio } from './audio/audio';
 import { Input, TOOLS, type Tool } from './input/input';
 import { Midi } from './midi/midi';
@@ -8,6 +7,12 @@ import { midiAt } from './sim/music';
 import { Sim } from './sim/sim';
 import type { Command, DriftMode, SceneData, SimEvent } from './sim/types';
 import { decodeScene, encodeScene, SCENE_HASH_KEY, SCENE_STORAGE_KEY, sceneFromSim } from './scene/scene';
+import {
+  loadLibrary, loadPrefs, pickPrefs, saveLibrary, savePrefs, sceneFromFile, sceneToFile,
+} from './ui/storage';
+import { Panel, Popover } from './ui/panel';
+import { ScenesPopover } from './ui/scenes';
+import { Toolbar } from './ui/toolbar';
 
 // 時計は AudioContext の1本（decisions.md D3, D8）。
 // sim は LOOKAHEAD ぶん先行し、音は t0 + step/HZ に予約、描画は「今聴こえている時刻」の世界を表示する。
@@ -24,7 +29,12 @@ const PATTERNS: Record<string, number[]> = {
   '2 : 3 : 5': [2, 3, 5],
 };
 
-const params = {
+const DRIFT_MODES: readonly DriftMode[] = ['off', 'drift', 'phrase'];
+const COLOR_MODES = ['pitch', 'mono'] as const;
+const TRAILS = ['geometry', 'afterimage'] as const;
+const PIXEL_RATIOS = [1, 1.5, 2] as const;
+
+const DEFAULTS = {
   bpm: 90,
   pattern: '2 : 3',
   volume: -3,
@@ -37,13 +47,13 @@ const params = {
   drift: 'drift' as DriftMode,
   driftAmp: 24,
   stereoWidth: 0.7,
-  trail: 'geometry' as 'geometry' | 'afterimage',
-  colorMode: 'pitch' as 'pitch' | 'mono',
+  trail: 'geometry' as (typeof TRAILS)[number],
+  colorMode: 'pitch' as (typeof COLOR_MODES)[number],
   bloomStrength: 0.9,
   afterimage: 0.8,
   idleLine: 0.3,
   visualOffsetMs: 0,
-  pixelRatio: 1,
+  pixelRatio: 1 as number,
   internalSound: true,
   midiOutput: '',
   midiChannel: 1,
@@ -51,6 +61,15 @@ const params = {
   midiNoteLength: 0.4,
   midiOffsetMs: 0,
 };
+const params = { ...DEFAULTS };
+
+/** 配置（SceneData）側で持つ値と、保存しない値。残りをこの端末の設定として自動保存する（D24） */
+const NOT_PREFS = new Set<string>(['bpm', 'pattern', 'rotate', 'rotationSpeed', 'drift', 'driftAmp', 'tool', 'muted', 'midiOutput']);
+function currentPrefs(): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(params)) if (!NOT_PREFS.has(k)) out[k] = v;
+  return out;
+}
 
 const DEMO: Command[] = [
   { kind: 'addSegment', ax: 700, ay: 300, bx: 900, by: 360 },
@@ -90,6 +109,9 @@ Audio.setupContext();
 const audio = new Audio();
 const stored = loadStoredScene();
 if (stored) applySceneParams(stored);
+const prefs = pickPrefs(DEFAULTS, loadPrefs(), { colorMode: COLOR_MODES, trail: TRAILS, pixelRatio: PIXEL_RATIOS });
+for (const k of NOT_PREFS) delete prefs[k as keyof typeof prefs];
+Object.assign(params, prefs);
 const sim = new Sim({
   bpm: params.bpm,
   pattern: PATTERNS[params.pattern]!,
@@ -118,18 +140,118 @@ addEventListener('resize', syncView);
 const setTool = (t: Tool) => {
   params.tool = t;
   input.setTool(t);
-  toolCtrl.updateDisplay();
+  toolbar.setTool(t);
 };
 
-// ---- GUI ----
-const gui = new GUI({ title: 'otosu' });
-const toolCtrl = gui.add(params, 'tool', [...TOOLS]).name('tool (1-5, Shift = bumper)').onChange(setTool);
-const muteCtrl = gui.add({ mute: () => toggleMute() }, 'mute').name('🔊 mute (M)');
+// ---- ツールバーと設定パネル（D24） ----
+const toolbar = new Toolbar(document.body, TOOLS, {
+  tool: (t) => setTool(t),
+  mute: () => toggleMute(),
+  volume: (db) => {
+    params.volume = db;
+    if (started) audio.setVolume(db);
+  },
+  tempo: (bpm) => {
+    params.bpm = bpm;
+    setTempo();
+    panel.refresh();
+  },
+  clear: () => sim.enqueue({ kind: 'clearSegments' }),
+  motion: (anchor) => togglePopover('motion', anchor),
+  light: (anchor) => togglePopover('light', anchor),
+  scenes: (anchor) => togglePopover('scenes', anchor),
+  fullscreen: () => toggleFullscreen(),
+});
+toolbar.el.classList.add('ui');
+toolbar.setTool(params.tool);
+toolbar.setTempo(params.bpm);
+toolbar.setVolume(params.volume);
+
+// 配置の保存・読み込み（ツールバーの保存ボタンから開く）
+const lib = { name: '', current: '' };
+let library = loadLibrary();
+const scenes = new ScenesPopover(document.body, {
+  save: (name) => saveToLibrary(name),
+  load: (name) => loadFromLibrary(name),
+  remove: (name) => removeFromLibrary(name),
+  clear: () => sim.enqueue({ kind: 'clearSegments' }),
+  exportFile: () => exportSceneFile(),
+  importFile: () => fileInput.click(),
+  copyLink: () => void copySceneUrl(),
+});
+
+// 動きと光: 直感的に触れるつまみだけ。0 にするとオフ
+const motionPop = new Popover(document.body);
+const motionKnobs = {
+  get spin() { return params.rotate ? params.rotationSpeed : 0; },
+  set spin(v: number) {
+    params.rotate = v > 0;
+    if (v > 0) params.rotationSpeed = Math.max(0.05, v);
+  },
+  get sway() { return params.drift === 'off' ? 0 : params.driftAmp; },
+  set sway(v: number) {
+    if (v <= 0) params.drift = 'off';
+    else {
+      if (params.drift === 'off') params.drift = 'drift';
+      params.driftAmp = v;
+    }
+  },
+};
+const offOr = (f: (v: number) => string) => (v: number) => (v <= 0 ? 'off' : f(v));
+{
+  const m = motionPop.section();
+  m.slider(motionKnobs, 'spin', { label: 'spin', min: 0, max: 1, step: 0.01, format: offOr((v) => v.toFixed(2)), onChange: () => setRotation() });
+  m.slider(motionKnobs, 'sway', { label: 'sway', min: 0, max: 80, step: 1, format: offOr(String), onChange: () => setDrift() });
+}
+const lightPop = new Popover(document.body);
+{
+  const l = lightPop.section();
+  l.slider(params, 'bloomStrength', { label: 'glow', min: 0, max: 2, step: 0.01 });
+  l.slider(params, 'idleLine', { label: 'lines', min: 0.15, max: 0.45, step: 0.01 });
+  l.slider(params, 'afterimage', { label: 'trail', min: 0.7, max: 0.97, step: 0.005, format: (v) => v.toFixed(2) });
+  l.choice(params, 'colorMode', 'color', () => COLOR_MODES.map((value) => ({ value, label: value === 'pitch' ? 'by pitch' : 'white' })));
+}
+
+type PopName = 'motion' | 'light' | 'scenes';
+const popovers: Record<PopName, { isOpen: boolean; close(): void; onClose: (() => void) | null }> = {
+  motion: motionPop, light: lightPop, scenes,
+};
+for (const pop of Object.values(popovers)) {
+  pop.onClose = () => {
+    if (!Object.values(popovers).some((p) => p.isOpen)) toolbar.setOpenPopover(null);
+  };
+}
+function togglePopover(name: PopName, anchor: HTMLElement): void {
+  const wasOpen = popovers[name].isOpen;
+  closePopovers();
+  if (wasOpen) return;
+  toggleSettings(false);
+  if (name === 'scenes') {
+    scenes.update(library, lib.current, lib.name);
+    scenes.open(anchor);
+  } else (name === 'motion' ? motionPop : lightPop).open(anchor);
+  toolbar.setOpenPopover(name);
+}
+function closePopovers(): void {
+  for (const pop of Object.values(popovers)) pop.close();
+}
+
+// 細かい調整（普段は出さない。, キーで開く）
+const panel = new Panel(document.body);
+panel.el.classList.add('ui');
+function toggleSettings(open = !panel.isOpen): void {
+  if (open) closePopovers();
+  panel.setOpen(open);
+}
+function toggleFullscreen(): void {
+  if (document.fullscreenElement) void document.exitFullscreen();
+  else void document.documentElement.requestFullscreen();
+}
 function toggleMute(): void {
   params.muted = !params.muted;
   audio.setMuted(params.muted);
   if (params.muted) midi.allNotesOff();
-  muteCtrl.name(params.muted ? '🔇 unmute (M)' : '🔊 mute (M)');
+  toolbar.setMuted(params.muted);
 }
 const setTempo = () => {
   // 録音中にテンポや周期を変えると小節線が崩れるので、そこまでを保存して止める（D10）
@@ -139,63 +261,150 @@ const setTempo = () => {
 };
 const setRotation = () => sim.enqueue({ kind: 'setRotation', on: params.rotate, speed: params.rotationSpeed });
 const setDrift = () => sim.enqueue({ kind: 'setDrift', mode: params.drift, amp: params.driftAmp });
-const music = gui.addFolder('Music');
-music.add(params, 'bpm', 60, 140, 1).onFinishChange(setTempo);
-music.add(params, 'pattern', Object.keys(PATTERNS)).onChange(setTempo);
-music.add(params, 'volume', -30, 0, 1).onChange((v: number) => started && audio.setVolume(v));
-music.add(params, 'stereoWidth', 0, 1, 0.05).onChange((v: number) => started && audio.setStereoWidth(v));
-music.add(params, 'pad').onChange((on: boolean) => started && audio.setPad(on));
-music.add(params, 'padLevel', 0, 1, 0.01).name('pad level').onChange((v: number) => started && audio.setPadLevel(v));
-const motion = gui.addFolder('Motion');
-motion.add(params, 'rotate').onChange(setRotation);
-motion.add(params, 'rotationSpeed', 0.05, 1, 0.01).onFinishChange(setRotation);
-motion.add(params, 'drift', ['off', 'drift', 'phrase']).onChange(setDrift);
-motion.add(params, 'driftAmp', 0, 80, 1).onFinishChange(setDrift);
-const visual = gui.addFolder('Visual');
-visual.add(params, 'trail', ['geometry', 'afterimage']);
-visual.add(params, 'colorMode', ['pitch', 'mono']);
-visual.add(params, 'bloomStrength', 0, 2, 0.01);
-visual.add(params, 'afterimage', 0.7, 0.97, 0.005);
-visual.add(params, 'idleLine', 0.15, 0.45, 0.01);
-visual.add(params, 'visualOffsetMs', -150, 40, 1);
-visual.add(params, 'pixelRatio', [1, 1.5, 2]).onChange((r: number) => renderer.setPixelRatio(r));
-gui.add({ clear: () => sim.enqueue({ kind: 'clearSegments' }) }, 'clear').name('clear lines (C)');
-gui.add({ demo: () => DEMO.forEach((c) => sim.enqueue(c)) }, 'demo').name('add demo lines');
-gui.add({ copy: () => void copySceneUrl() }, 'copy').name('copy scene URL (S)');
-const midiFolder = gui.addFolder('MIDI');
+const choices = <V,>(values: readonly V[], label?: (v: V) => string) => () =>
+  values.map((value) => ({ value, label: label?.(value) }));
+
+const sound = panel.section('Sound');
+sound.choice(params, 'pattern', 'pattern', () => Object.keys(PATTERNS).map((value) => ({ value })), setTempo);
+sound.toggle(params, 'pad', 'pad', (on) => started && audio.setPad(on));
+sound.slider(params, 'padLevel', { label: 'pad level', min: 0, max: 1, step: 0.01, onInput: (v) => started && audio.setPadLevel(v) });
+sound.slider(params, 'stereoWidth', { label: 'stereo', min: 0, max: 1, step: 0.05, onInput: (v) => started && audio.setStereoWidth(v) });
+
+const motion = panel.section('Motion', false);
+motion.toggle(params, 'rotate', 'rotate', setRotation);
+motion.slider(params, 'rotationSpeed', { label: 'speed', min: 0.05, max: 1, step: 0.01, onChange: setRotation });
+motion.choice(params, 'drift', 'drift', choices(DRIFT_MODES), setDrift);
+motion.slider(params, 'driftAmp', { label: 'amount', min: 0, max: 80, step: 1, onChange: setDrift });
+
+const light = panel.section('Light', false);
+light.slider(params, 'bloomStrength', { label: 'glow', min: 0, max: 2, step: 0.01 });
+light.slider(params, 'idleLine', { label: 'lines', min: 0.15, max: 0.45, step: 0.01 });
+light.choice(params, 'colorMode', 'color', choices(COLOR_MODES));
+light.choice(params, 'trail', 'trail', choices(TRAILS));
+light.slider(params, 'afterimage', { label: 'afterimage', min: 0.7, max: 0.97, step: 0.005, format: (v) => v.toFixed(2) });
+light.slider(params, 'visualOffsetMs', { label: 'light delay', min: -150, max: 40, step: 1, format: (v) => `${v} ms` });
+light.choice(params, 'pixelRatio', 'resolution', choices(PIXEL_RATIOS, (r) => `×${r}`), (r) => renderer.setPixelRatio(r));
+
+const midiPane = panel.section('MIDI', false);
 const midi = new Midi({
   get channel() { return params.midiChannel; },
   get drumChannel() { return params.midiDrumChannel; },
   get noteLength() { return params.midiNoteLength; },
   get offsetMs() { return params.midiOffsetMs; },
 });
-midiFolder.add(params, 'internalSound').name('internal sound');
-let outputCtrl = midiFolder.add(params, 'midiOutput', { '(none)': '' }).name('output');
-const midiActions = {
-  connect: async () => {
-    try {
-      const outs = await midi.connect();
-      const options: Record<string, string> = { '(none)': '' };
-      for (const o of outs) options[o.name] = o.id;
-      const iac = outs.find((o) => /IAC/i.test(o.name));
-      if (!params.midiOutput && iac) params.midiOutput = iac.id;
-      outputCtrl = outputCtrl.options(options).name('output').onChange((id: string) => midi.select(id || null));
-      midi.select(params.midiOutput || null);
-      connectCtrl.name(outs.length ? `MIDI connected (${outs.length})` : 'no MIDI outputs found');
-    } catch (err) {
-      console.warn('[otosu] MIDI', err);
-      connectCtrl.name(Midi.supported ? 'MIDI permission denied' : 'Web MIDI unsupported (use Chrome)');
-    }
-  },
-  record: () => toggleRecording(),
-};
-const connectCtrl = midiFolder.add(midiActions, 'connect').name('connect MIDI');
-midiFolder.add(params, 'midiChannel', 1, 16, 1).name('channel').onChange(() => midi.allNotesOff());
-midiFolder.add(params, 'midiDrumChannel', 1, 16, 1).name('drum channel (○ □)').onChange(() => midi.allNotesOff());
-midiFolder.add(params, 'midiNoteLength', 0.05, 2, 0.05).name('note length (s)');
-midiFolder.add(params, 'midiOffsetMs', -100, 200, 1).name('offset (ms)');
-const recordCtrl = midiFolder.add(midiActions, 'record').name('● record .mid (R)');
-gui.close();
+let midiOutputs: { id: string; name: string }[] = [];
+midiPane.toggle(params, 'internalSound', 'built-in');
+midiPane.select(params, 'midiOutput', 'output', () => [{ value: '', label: '(none)' }, ...midiOutputs.map((o) => ({ value: o.id, label: o.name }))], (id) => midi.select(id || null));
+midiPane.slider(params, 'midiChannel', { label: 'channel', min: 1, max: 16, step: 1, onChange: () => midi.allNotesOff() });
+midiPane.slider(params, 'midiDrumChannel', { label: 'drums ○ □', min: 1, max: 16, step: 1, onChange: () => midi.allNotesOff() });
+midiPane.slider(params, 'midiNoteLength', { label: 'note length', min: 0.05, max: 2, step: 0.05, format: (v) => `${v.toFixed(2)} s` });
+midiPane.slider(params, 'midiOffsetMs', { label: 'offset', min: -100, max: 200, step: 1, format: (v) => `${v} ms` });
+const [connectBtn, recordBtn] = midiPane.actions([
+  { label: 'connect', onClick: () => void connectMidi() },
+  { label: '● record .mid', title: 'record to a MIDI file (R)', onClick: () => toggleRecording() },
+]) as [HTMLButtonElement, HTMLButtonElement];
+async function connectMidi(): Promise<void> {
+  try {
+    midiOutputs = await midi.connect();
+    const iac = midiOutputs.find((o) => /IAC/i.test(o.name));
+    if (!params.midiOutput && iac) params.midiOutput = iac.id;
+    midi.select(params.midiOutput || null);
+    connectBtn.textContent = midiOutputs.length ? `connected (${midiOutputs.length})` : 'no outputs found';
+  } catch (err) {
+    console.warn('[otosu] MIDI', err);
+    connectBtn.textContent = Midi.supported ? 'permission denied' : 'unsupported (use Chrome)';
+  }
+  panel.refresh();
+}
+
+panel.section('', true).actions([{ label: 'reset settings', title: 'shapes are kept', onClick: () => resetSettings() }]);
+renderer.setPixelRatio(params.pixelRatio);
+
+function saveToLibrary(input: string): void {
+  const name = input.trim() || `scene ${stamp()}`;
+  if (library[name] && name !== lib.current && !confirm(`"${name}" を上書きしますか？`)) return;
+  library[name] = { code: currentSceneCode(), savedAt: Date.now() };
+  saveLibrary(library);
+  lib.name = name;
+  lib.current = name;
+  scenes.update(library, lib.current, lib.name);
+  scenes.flash(`saved “${name}”`);
+}
+
+function loadFromLibrary(name: string): void {
+  const entry = library[name];
+  const scene = entry && decodeScene(entry.code);
+  if (!scene) return;
+  lib.name = name;
+  lib.current = name;
+  loadSceneData(scene);
+}
+
+function removeFromLibrary(name: string): void {
+  if (!library[name] || !confirm(`"${name}" を削除しますか？`)) return;
+  delete library[name];
+  saveLibrary(library);
+  if (lib.current === name) lib.current = '';
+  scenes.update(library, lib.current, lib.name);
+}
+
+/** 配置を読み込み、テンポや動きのつまみも合わせる */
+function loadSceneData(scene: SceneData): void {
+  if (midi.isRecording) toggleRecording();
+  applySceneParams(scene);
+  sim.enqueue({ kind: 'loadScene', scene });
+  if (started) audio.setBpm(scene.bpm);
+  toolbar.setTempo(params.bpm);
+  panel.refresh();
+}
+
+function exportSceneFile(): void {
+  const name = lib.name.trim() || `otosu-${stamp()}`;
+  const text = sceneToFile(name, sceneFromSim(sim));
+  download(new Blob([text], { type: 'application/json' }), `${name.replace(/[\\/:*?"<>|]/g, '_')}.otosu.json`);
+}
+
+const fileInput = document.createElement('input');
+fileInput.type = 'file';
+fileInput.accept = '.json,application/json';
+fileInput.addEventListener('change', async () => {
+  const file = fileInput.files?.[0];
+  fileInput.value = '';
+  if (!file) return;
+  const loaded = sceneFromFile(await file.text());
+  if (!loaded) {
+    alert('otosu の配置ファイルとして読めませんでした');
+    return;
+  }
+  lib.name = loaded.name || file.name.replace(/(\.otosu)?\.json$/i, '');
+  lib.current = '';
+  loadSceneData(loaded.scene);
+});
+
+/** つまみを既定値に戻す（図形は残す） */
+function resetSettings(): void {
+  if (!confirm('設定を初期値に戻しますか？（図形は残ります）')) return;
+  const { tool, muted, midiOutput } = params;
+  Object.assign(params, DEFAULTS, { tool, muted, midiOutput });
+  setTempo();
+  setRotation();
+  setDrift();
+  applyPrefs();
+  toolbar.setTempo(params.bpm);
+  toolbar.setVolume(params.volume);
+  panel.refresh();
+}
+
+/** 端末ごとの設定（音量・光など）を音と描画に反映する */
+function applyPrefs(): void {
+  renderer.setPixelRatio(params.pixelRatio);
+  midi.allNotesOff();
+  if (!started) return;
+  audio.setVolume(params.volume);
+  audio.setStereoWidth(params.stereoWidth);
+  audio.setPad(params.pad);
+  audio.setPadLevel(params.padLevel);
+}
 
 function toggleRecording(): void {
   if (!started) return;
@@ -206,16 +415,26 @@ function toggleRecording(): void {
     const anchor = em ? em.anchorStep : 0;
     const start = anchor + Math.ceil((sim.step - anchor) / spb) * spb;
     midi.startRecording(start, sim.bpm);
-    recordCtrl.name('■ stop & save .mid (R)');
+    recordBtn.textContent = '■ stop & save .mid';
+    recordBtn.classList.add('rec');
     return;
   }
   const data = midi.stopRecording();
-  recordCtrl.name('● record .mid (R)');
+  recordBtn.textContent = '● record .mid';
+  recordBtn.classList.remove('rec');
   if (!data) return;
+  download(new Blob([data as BlobPart], { type: 'audio/midi' }), `otosu-${stamp()}.mid`);
+}
+
+/** ファイル名用の日時（例 20260927-1430） */
+function stamp(): string {
   const d = new Date();
   const pad = (n: number) => String(n).padStart(2, '0');
-  const name = `otosu-${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}.mid`;
-  const url = URL.createObjectURL(new Blob([data as BlobPart], { type: 'audio/midi' }));
+  return `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}`;
+}
+
+function download(blob: Blob, name: string): void {
+  const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
   a.download = name;
@@ -225,13 +444,16 @@ function toggleRecording(): void {
 
 // ---- キー操作・カーソル ----
 addEventListener('keydown', (e) => {
-  if (e.target instanceof HTMLInputElement || e.metaKey || e.ctrlKey) return;
+  if (e.target instanceof HTMLInputElement || e.target instanceof HTMLSelectElement || e.metaKey || e.ctrlKey) return;
   if (e.key === 'f' || e.key === 'F') {
-    if (document.fullscreenElement) void document.exitFullscreen();
-    else void document.documentElement.requestFullscreen();
+    toggleFullscreen();
   } else if (e.key === 'h' || e.key === 'H') {
-    gui.show(gui._hidden);
-    document.getElementById('hint')!.classList.toggle('hidden');
+    document.body.classList.toggle('ui-hidden');
+  } else if (e.key === 'Escape') {
+    toggleSettings(false);
+    closePopovers();
+  } else if (e.key === ',') {
+    toggleSettings();
   } else if (e.key === 'c' || e.key === 'C') {
     sim.enqueue({ kind: 'clearSegments' });
   } else if (e.key === 'r' || e.key === 'R') {
@@ -349,14 +571,20 @@ async function copySceneUrl(): Promise<void> {
   history.replaceState(null, '', url);
   try {
     await navigator.clipboard.writeText(url);
-    console.info('[otosu] scene URL copied');
+    scenes.flash('link copied');
   } catch {
     console.info(`[otosu] scene URL: ${url}`);
   }
 }
 
 let lastSaved = '';
+let lastPrefs = JSON.stringify(currentPrefs());
 setInterval(() => {
+  const prefsJson = JSON.stringify(currentPrefs());
+  if (prefsJson !== lastPrefs) {
+    lastPrefs = prefsJson;
+    savePrefs(currentPrefs());
+  }
   // 開始前はコマンドが sim に適用されていないので保存しない（空の配置で上書きしてしまう）
   if (!started) return;
   const code = currentSceneCode();

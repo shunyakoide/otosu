@@ -243,6 +243,9 @@ function hash01(a: number, b: number, c: number): number {
   return (h >>> 0) / 4294967296;
 }
 
+/** 画面上端のツールバー用の帯（CSS px）。index.html の #toolbar と合わせる */
+export const TOP_BAND_PX = 52;
+
 export class Renderer {
   readonly canvas: HTMLCanvasElement;
   private readonly renderer: WebGLRenderer;
@@ -400,16 +403,17 @@ export class Renderer {
   private resize(): void {
     const w = innerWidth;
     const h = innerHeight;
-    const s = Math.min(w / WORLD_W, h / WORLD_H);
+    // 上端はツールバーの帯としてあけ、ワールドはその下から始める（D24）
+    const s = Math.min(w / WORLD_W, (h - TOP_BAND_PX) / WORLD_H);
     this.scale = s;
     // 16:9 のワールドは左右中央・上寄せ。余りはウィンドウ全体を使う（縦長なら下、横長なら左右。D23）
     this.offsetX = (w - WORLD_W * s) / 2;
-    this.offsetY = 0;
+    this.offsetY = TOP_BAND_PX;
     const viewW = w / s;
-    const viewH = h / s;
+    const viewH = (h - TOP_BAND_PX) / s;
     this.camera.left = -(viewW - WORLD_W) / 2;
     this.camera.right = this.camera.left + viewW;
-    this.camera.top = 0;
+    this.camera.top = TOP_BAND_PX / s;
     this.camera.bottom = -viewH;
     this.view = { minX: this.camera.left, maxX: this.camera.right, maxY: viewH };
     this.camera.updateProjectionMatrix();

@@ -15,16 +15,55 @@
         user-select: none;
       }
       #overlay b { display: block; font-size: 40px; font-weight: 300; letter-spacing: 0.4em; margin-bottom: 16px; }
-      #hint {
-        position: fixed; left: 16px; bottom: 12px; font-size: 12px; opacity: 0.35;
-        letter-spacing: 0.08em; pointer-events: none; transition: opacity 0.4s;
+      /* ---- UI（D24）: 操作が止まると消える。H で完全に隠す ---- */
+      .ui { transition: opacity 0.5s; }
+      body.idle .ui:not(:hover):not(.pn) { opacity: 0; pointer-events: none; }
+      body.ui-hidden .ui { display: none !important; }
+      #toolbar {
+        position: fixed; left: 50%; top: 6px; transform: translateX(-50%); height: 40px;
+        display: flex; align-items: center; gap: 2px;
       }
-      #hint.hidden { opacity: 0; }
+      #toolbar button {
+        width: 34px; height: 34px; padding: 7px; border: 0; border-radius: 8px;
+        background: none; color: rgba(232, 236, 242, 0.4); cursor: pointer;
+      }
+      #toolbar button:hover { color: rgba(232, 236, 242, 0.85); }
+      #toolbar button.on { color: #fff; }
+      #toolbar button.warn { color: #ff8a7a; }
+      #toolbar button svg { width: 100%; height: 100%; display: block; }
+      #toolbar .tb-tempo { display: flex; align-items: center; }
+      #toolbar .tb-tempo button { width: 22px; padding: 5px 3px; }
+      #toolbar .tb-tempo span {
+        min-width: 26px; text-align: center; font-size: 12px; font-variant-numeric: tabular-nums;
+        color: rgba(232, 236, 242, 0.75); cursor: ns-resize;
+      }
+      #toolbar .tb-tempo span::after { content: 'bpm'; margin-left: 3px; font-size: 9px; color: rgba(232, 236, 242, 0.35); }
+      #toolbar .tb-volume { display: flex; align-items: center; }
+      #toolbar .tb-volume input {
+        --p: 90%; width: 64px; height: 16px; margin: 0 6px 0 0; background: none;
+        -webkit-appearance: none; appearance: none; cursor: pointer;
+      }
+      #toolbar .tb-volume input::-webkit-slider-runnable-track {
+        height: 1px; background: linear-gradient(to right, rgba(255, 255, 255, 0.6) var(--p), rgba(255, 255, 255, 0.14) var(--p));
+      }
+      #toolbar .tb-volume input::-webkit-slider-thumb {
+        -webkit-appearance: none; width: 8px; height: 8px; margin-top: -3.5px; border-radius: 50%; background: #fff;
+      }
+      #toolbar .tb-volume input::-moz-range-track { height: 1px; background: rgba(255, 255, 255, 0.14); }
+      #toolbar .tb-volume input::-moz-range-progress { height: 1px; background: rgba(255, 255, 255, 0.6); }
+      #toolbar .tb-volume input::-moz-range-thumb { width: 8px; height: 8px; border: 0; border-radius: 50%; background: #fff; }
+      #toolbar.muted .tb-volume input { opacity: 0.3; }
+      #toolbar input:focus { outline: none; }
+      #toolbar i { width: 1px; height: 16px; margin: 0 6px; background: rgba(255, 255, 255, 0.12); }
+      #toolbar-help {
+        position: fixed; left: 16px; bottom: 12px; white-space: nowrap;
+        font-size: 11px; letter-spacing: 0.06em; opacity: 0.3; pointer-events: none;
+      }
+      @media (max-width: 520px) { #toolbar-help { display: none; } }
     </style>
   </head>
   <body>
     <div id="app"></div>
-    <div id="hint">drag: draw · 1–5: line / pen / circle / triangle / square · shift: bumper · right-click: erase · M: mute · C: clear · F: fullscreen · H: hide ui</div>
     <div id="overlay"><div style="text-align:center"><b>otosu</b>click to start</div></div>
     <script type="module" src="/src/main.ts"></script>
   </body>

@@ -12,7 +12,7 @@
 | 音量 | 衝突速度 |
 | 展開 | 放出口を **複数**（周期をずらしてポリリズム）。図形の回転は **オン/オフ可能** |
 | 発音数の制限 | まず作ってみて判断（必要ならクールダウン・同時発音上限・ボール寿命） |
-| 技術 | Vite + TypeScript + **素の Three.js**（UnrealBloomPass / AfterimagePass）+ **Tone.js**。React / R3F は使わない。調整 UI は lil-gui |
+| 技術 | Vite + TypeScript + **素の Three.js**（UnrealBloomPass / AfterimagePass）+ **Tone.js**。React / R3F は使わない。調整 UI は自前の小さなパネル（当初は lil-gui。D24 で置き換え） |
 | 物理 | 自前実装（ボール vs 線分の反射のみ、ボール同士は衝突しない）。Matter.js は使わない |
 | 連携 | できる範囲でシンプルに。まずは Web MIDI（Mac の IAC Driver 経由で DAW へ） |
 
