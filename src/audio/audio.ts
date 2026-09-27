@@ -50,7 +50,7 @@ const PEN_TINE_HIGH = 4.0;
 
 // ---- circle: 柔らかいキック〜タム ----
 const KICK_VOICES = 4;
-const KICK_BASE_DB = -16;
+const KICK_BASE_DB = -20;
 const KICK_RELEASE = 0.3;
 /** キックのローパス（高域を落として丸いアタックに） */
 const KICK_LP_HZ = 800;
@@ -60,7 +60,7 @@ const KICK_SEND = 0.1;
 const KICK_PAN = 0.35;
 /** いちばん低い帯（C1 帯）だけに重ねるサイン波のサブ */
 const SUB_VOICES = 2;
-const SUB_DB = -18;
+const SUB_DB = -22;
 
 // ---- triangle: チャイム／シンギングボウル ----
 const CHIME_VOICES = 6;
