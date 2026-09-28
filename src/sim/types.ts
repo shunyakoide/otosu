@@ -1,4 +1,5 @@
 import type { Bounds } from './constants';
+import type { SongId } from './music';
 
 /** 辺の種類（図形単位で同じ値。D13） */
 export type SegKind = 'line' | 'bumper';
@@ -102,6 +103,8 @@ export type SceneData = {
   rotate: boolean;
   rotationSpeed: number;
   drift: { mode: DriftMode; amp: number };
+  /** 曲（D48）。無い・不正なら bright */
+  song?: SongId;
   shapes: SceneShape[];
   /** shapes と同じ順の形（D16）。無い・長さが合わない・不正な値の要素は点列から推定する（inferForm） */
   forms?: ShapeForm[];
@@ -131,8 +134,11 @@ export type Command =
   | { kind: 'setEffect'; group: number; effect: ShapeEffect }
   | { kind: 'clearSegments' }
   | { kind: 'setRotation'; on: boolean; speed: number }
+  /** 再生・停止（D50）。止めると球を出さなくなり、回転はゆっくり止まる */
+  | { kind: 'setPlaying'; on: boolean }
   | { kind: 'setTempo'; bpm: number; pattern: readonly number[] }
   | { kind: 'setDrift'; mode: DriftMode; amp: number }
+  | { kind: 'setSong'; song: SongId }
   /** 表示されている範囲（D23）。これより外に出たボールを消す */
   | { kind: 'setView'; bounds: Bounds }
   | { kind: 'loadScene'; scene: SceneData };
@@ -196,7 +202,8 @@ export type SimEvent =
   | { kind: 'shapeRemoved'; step: number; group: number }
   | { kind: 'shapeEffect'; step: number; group: number; effect: ShapeEffect }
   /** ハーモニー区間の切り替わり（開始時にも1回） */
-  | { kind: 'section'; step: number; section: number };
+  /** root = 区間の根音（C 基準の音高クラス、曲で決まる） */
+  | { kind: 'section'; step: number; section: number; root: number };
 
 /** あるステップ時点のボール位置（id 昇順） */
 export type Snapshot = {

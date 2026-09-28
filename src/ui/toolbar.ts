@@ -1,4 +1,5 @@
 import type { Tool } from '../input/input';
+import './toolbar.css';
 
 // 画面上端のツールバー（D24）。道具・テンポ・音量・保存だけを置き、ワールドに重ならない帯に収める。
 // 操作が止まると他の UI と一緒に消える（投影中に映り込まないように）。
@@ -18,8 +19,10 @@ const ICONS = {
   muted: svg('<path d="M4 9.5h3.5L12 6v12l-4.5-3.5H4z"/><path d="m16 9.5 5 5M21 9.5l-5 5"/>'),
   clear: svg('<path d="M5 7h14M9.5 7V5h5v2M7 7l1 12h8l1-12"/>'),
   scenes: svg('<path d="M6 4h9l3 3v13H6z"/><path d="M9 4v5h6V4M9 20v-6h6v6"/>'),
-  motion: svg('<path d="M19 12a7 7 0 1 1-2.05-4.95"/><path d="M19 4.5V8h-3.5"/>'),
+  // 回る・揺れる: 軌道と、その上の小さな玉（再読み込みの矢印に見えないように。D45）
+  motion: svg('<ellipse cx="12" cy="12" rx="8.5" ry="4" transform="rotate(-25 12 12)"/><circle cx="12" cy="12" r="1.6"/><circle cx="19.2" cy="8.6" r="1.1" fill="currentColor"/>'),
   light: svg('<circle cx="12" cy="12" r="3.5"/><path d="M12 3v2M12 19v2M3 12h2M19 12h2M5.6 5.6l1.4 1.4M17 17l1.4 1.4M5.6 18.4 7 17M17 7l1.4-1.4"/>'),
+  settings: svg('<path d="M4 7h9M17 7h3M4 17h3M11 17h9"/><circle cx="15" cy="7" r="2"/><circle cx="9" cy="17" r="2"/>'),
   minus: svg('<path d="M7 12h10"/>'),
   plus: svg('<path d="M7 12h10M12 7v10"/>'),
   fullscreen: svg('<path d="M4 9V4h5M15 4h5v5M20 15v5h-5M9 20H4v-5"/>'),
@@ -45,13 +48,22 @@ export type ToolbarActions = {
   motion: (anchor: HTMLElement) => void;
   light: (anchor: HTMLElement) => void;
   scenes: (anchor: HTMLElement) => void;
+  /** 細かい設定のパネル（, キーと同じ） */
+  settings: () => void;
   fullscreen: () => void;
 };
+
+/** 小窓・パネルを開くボタン */
+type PopName = 'motion' | 'light' | 'settings' | 'scenes';
 
 export const TEMPO_MIN = 60;
 export const TEMPO_MAX = 140;
 export const VOLUME_MIN = -30;
 export const VOLUME_MAX = 0;
+/** 操作の案内を出しておく秒数 */
+const HELP_SEC = 12;
+/** 道具を選んだときに出す名前と音色の表示の秒数 */
+const TIP_SEC = 1.6;
 
 export class Toolbar {
   readonly el: HTMLElement;
@@ -59,11 +71,15 @@ export class Toolbar {
   private readonly muteBtn: HTMLButtonElement;
   private readonly playBtn: HTMLButtonElement;
   /** 小窓を開くボタン */
-  private readonly popBtns: Record<'motion' | 'light' | 'scenes', HTMLButtonElement>;
+  private readonly popBtns: Record<PopName, HTMLButtonElement>;
   private readonly volumeInput: HTMLInputElement;
   private readonly tempoOut: HTMLElement;
   private bpm = 90;
   private tempoTimer = 0;
+  private readonly help: HTMLElement;
+  private helpTimer = 0;
+  private readonly tip: HTMLElement;
+  private tipTimer = 0;
 
   constructor(parent: HTMLElement, tools: readonly Tool[], on: ToolbarActions) {
     this.el = document.createElement('nav');
@@ -130,19 +146,41 @@ export class Toolbar {
     sep();
     const motionBtn: HTMLButtonElement = btn(ICONS.motion, 'motion', () => on.motion(motionBtn));
     const lightBtn: HTMLButtonElement = btn(ICONS.light, 'light', () => on.light(lightBtn));
+    const settingsBtn = btn(ICONS.settings, 'settings (,)', on.settings);
     sep();
     const scenesBtn: HTMLButtonElement = btn(ICONS.scenes, 'save / load scenes', () => on.scenes(scenesBtn));
-    this.popBtns = { motion: motionBtn, light: lightBtn, scenes: scenesBtn };
+    this.popBtns = { motion: motionBtn, light: lightBtn, settings: settingsBtn, scenes: scenesBtn };
     // iPhone の Safari のように全画面にできない環境ではボタンを出さない
     if (document.fullscreenEnabled) btn(ICONS.fullscreen, 'fullscreen (F)', on.fullscreen);
 
-    const help = document.createElement('div');
-    help.id = 'toolbar-help';
-    help.textContent = matchMedia('(hover: none)').matches
-      ? 'drag: draw · long-press a shape: effects / delete'
-      : 'drag: draw · shift: bumper · right-click a shape: effects / delete · space: pause · H: hide ui · , : fine-tune';
-    help.classList.add('ui');
-    parent.append(this.el, help);
+    // 操作の案内: 始めるまでは出さず、始めてからしばらくで消す（showHelp）
+    this.help = document.createElement('div');
+    this.help.id = 'toolbar-help';
+    this.help.className = 'ui gone';
+    this.help.innerHTML = matchMedia('(hover: none)').matches
+      ? 'drag to draw · long-press a shape: effects / delete'
+      : 'drag to draw · <kbd>shift</kbd> bumper · right-click a shape: effects / delete · <kbd>space</kbd> pause · <kbd>H</kbd> hide ui · <kbd>,</kbd> fine-tune';
+    // 道具の名前と音色（タッチではホバーの説明が出ないので、選んだときに少しだけ出す）
+    this.tip = document.createElement('div');
+    this.tip.id = 'toolbar-tip';
+    this.tip.className = 'ui gone';
+    parent.append(this.el, this.help, this.tip);
+  }
+
+  /** 道具を選んだときに、名前と音色（例: circle — kick）をツールバーの下に少しだけ出す */
+  flashTool(tool: Tool): void {
+    this.tip.textContent = TOOL_LABELS[tool];
+    this.tip.style.top = `${this.el.getBoundingClientRect().bottom + 6}px`;
+    this.tip.classList.remove('gone');
+    clearTimeout(this.tipTimer);
+    this.tipTimer = window.setTimeout(() => this.tip.classList.add('gone'), TIP_SEC * 1000);
+  }
+
+  /** 操作の案内を出し、HELP_SEC 秒で消す */
+  showHelp(): void {
+    this.help.classList.remove('gone');
+    clearTimeout(this.helpTimer);
+    this.helpTimer = window.setTimeout(() => this.help.classList.add('gone'), HELP_SEC * 1000);
   }
 
   setTool(tool: Tool): void {
@@ -151,7 +189,7 @@ export class Toolbar {
 
   setMuted(muted: boolean): void {
     this.muteBtn.innerHTML = muted ? ICONS.muted : ICONS.sound;
-    this.muteBtn.classList.toggle('warn', muted);
+    this.muteBtn.classList.toggle('on', muted);
     this.muteBtn.title = muted ? 'unmute (M)' : 'mute (M)';
     this.el.classList.toggle('muted', muted);
   }
@@ -174,7 +212,7 @@ export class Toolbar {
   }
 
   /** 開いている小窓のボタンを光らせる（null で全部消す） */
-  setOpenPopover(which: 'motion' | 'light' | 'scenes' | null): void {
+  setOpenPopover(which: PopName | null): void {
     for (const [k, b] of Object.entries(this.popBtns)) b.classList.toggle('on', k === which);
   }
 

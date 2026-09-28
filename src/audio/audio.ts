@@ -1,5 +1,6 @@
 import * as Tone from 'tone';
 import { WORLD_W } from '../sim/constants';
+import type { SongId } from '../sim/music';
 import type { HitEvent, ShapeForm } from '../sim/types';
 
 // 音色: ガラス／マレット系の減衰音＋深めのリバーブ（docs/design/audio.md）。
@@ -32,12 +33,16 @@ const ENERGY_UPDATE_SEC = 0.1;
 /** これを超えるとオクターブ上を重ね始める（平滑化後の energy） */
 const DOUBLE_FROM = 0.55;
 
-/** パッドの根音（C 基準の音高クラス）。進行 PROG = I–IV–I–V（sim/music.ts）に対応 */
-const PAD_ROOT_PC = [0, 5, 0, 7] as const;
+/** パッドの根音の基準（C3）。区間の根音（sim/music.ts の曲で決まる）をこの上に置く */
 const PAD_ROOT_MIDI = 48; // C3
 const PAD_XFADE_SEC = 3;
 /** setPadLevel(1) のときのパッドの音量（線形） */
 const PAD_MAX_GAIN = 0.1;
+/** 曲ごとの後ろの和音の明るさ（ローパスの周波数、Hz。D48） */
+const PAD_CUTOFF: Record<SongId, number> = { bright: 900, dusk: 560, wistful: 1300, still: 700 };
+/** 止めたとき音が消えきるまで・続けたとき戻るまで（D50） */
+const STOP_FADE_SEC = 3;
+const PLAY_FADE_SEC = 0.6;
 
 // ---- pen: カリンバ（はじく音） ----
 const PEN_VOICES = 8;
@@ -175,12 +180,15 @@ export class Audio {
   private readonly padLayers: PadLayer[] = [];
   private padGain!: Tone.Gain;
   private padActive = -1;
-  private padSection = -1;
+  private padRoot = -1;
+  private padFilter!: Tone.Filter;
+  private padSong: SongId = 'bright';
   private padOn = true;
   private padLevel = 0.5;
-  private pendingSection: number | undefined;
+  private pendingRoot: number | undefined;
 
   private muted = false;
+  private playing = true;
 
   /**
    * ネイティブの AudioContext を自前で作って Tone に渡す。
@@ -230,7 +238,7 @@ export class Audio {
       delayTime: (60 / bpm) * 0.75, feedback: 0.28, wet: this.delayWet(0), maxDelay: 1.5,
     });
     const reverb = new Tone.Reverb({ decay: 6, preDelay: 0.03, wet: 0.35 });
-    this.master = new Tone.Gain(this.muted ? 0 : 1);
+    this.master = new Tone.Gain(this.level());
     const comp = new Tone.Compressor({ threshold: -20, ratio: 3, attack: 0.01, release: 0.25 });
     const limiter = new Tone.Limiter(-1);
     hitBus.chain(highpass, this.brightness, this.delay, reverb, this.master, comp, limiter, Tone.getDestination());
@@ -348,7 +356,8 @@ export class Audio {
     this.tickSynth.connect(this.master);
 
     // ---- パッド（根音＋5度、2層でクロスフェード） ----
-    const padFilter = new Tone.Filter({ type: 'lowpass', frequency: 900, rolloff: -24 });
+    const padFilter = new Tone.Filter({ type: 'lowpass', frequency: PAD_CUTOFF[this.padSong], rolloff: -24 });
+    this.padFilter = padFilter;
     this.padGain = new Tone.Gain(this.padTarget());
     padFilter.chain(this.padGain, reverb);
     for (let i = 0; i < 2; i++) {
@@ -363,7 +372,7 @@ export class Audio {
 
     await reverb.ready;
     this.started = true;
-    if (this.pendingSection !== undefined) this.setSection(this.pendingSection, this.raw.currentTime);
+    if (this.pendingRoot !== undefined) this.setSection(this.pendingRoot, this.raw.currentTime);
   }
 
   setBpm(bpm: number): void {
@@ -383,7 +392,18 @@ export class Audio {
   setMuted(on: boolean): void {
     this.muted = on;
     if (!this.started) return;
-    this.master.gain.rampTo(on ? 0 : 1, 0.03);
+    this.master.gain.rampTo(this.level(), 0.03);
+  }
+
+  /** 再生・停止（D50）。止めるとすべての内蔵音を STOP_FADE_SEC かけて小さくし、続けると少し早めに戻す */
+  setPlaying(on: boolean): void {
+    this.playing = on;
+    if (!this.started) return;
+    this.master.gain.rampTo(this.level(), on ? PLAY_FADE_SEC : STOP_FADE_SEC);
+  }
+
+  private level(): number {
+    return this.muted || !this.playing ? 0 : 1;
   }
 
   // ---- 衝突 ----
@@ -690,17 +710,16 @@ export class Audio {
 
   // ---- パッド（D11: 音だけ。MIDI には送らない） ----
 
-  /** 区間が変わったらパッドのコード（根音＋5度）をゆっくりクロスフェードで切り替える */
-  setSection(section: number, time: number): void {
+  /** 区間が変わったらパッドのコード（根音＋5度）をゆっくりクロスフェードで切り替える。root = 区間の根音（C 基準の音高クラス） */
+  setSection(root: number, time: number): void {
     if (!this.started) {
-      this.pendingSection = section;
+      this.pendingRoot = root;
       return;
     }
-    const sec = ((section % PAD_ROOT_PC.length) + PAD_ROOT_PC.length) % PAD_ROOT_PC.length;
-    if (sec === this.padSection) return;
-    this.padSection = sec;
+    if (root === this.padRoot) return;
+    this.padRoot = root;
     const at = Math.max(time, this.raw.currentTime);
-    const rootMidi = PAD_ROOT_MIDI + PAD_ROOT_PC[sec]!;
+    const rootMidi = PAD_ROOT_MIDI + root;
 
     const next = this.padActive === 0 ? 1 : 0;
     const layer = this.padLayers[next]!;
@@ -715,6 +734,12 @@ export class Audio {
       old.linearRampToValueAtTime(0, at + PAD_XFADE_SEC);
     }
     this.padActive = next;
+  }
+
+  /** 曲に合わせてパッドの明るさを変える（D48） */
+  setSong(song: SongId): void {
+    this.padSong = song;
+    if (this.started) this.padFilter.frequency.rampTo(PAD_CUTOFF[song], 2);
   }
 
   setPad(on: boolean): void {

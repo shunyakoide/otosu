@@ -6,7 +6,7 @@ import { BACKDROPS, type BackdropKind } from './render/backdrop';
 import type { ColorMode } from './render/palette';
 import { Renderer, TOP_BAND_PX } from './render/render';
 import { HISTORY, HZ } from './sim/constants';
-import { midiAt } from './sim/music';
+import { DEFAULT_SONG, midiAt, SONG_IDS, type SongId } from './sim/music';
 import { Sim } from './sim/sim';
 import type { Command, DriftMode, SceneData, SimEvent } from './sim/types';
 import { decodeScene, encodeScene, SCENE_HASH_KEY, SCENE_STORAGE_KEY, sceneFromSim } from './scene/scene';
@@ -43,6 +43,9 @@ const DEFAULTS = {
   volume: -3,
   muted: false,
   tool: 'line' as Tool,
+  /** 曲（D48）。配置側で持つ */
+  song: DEFAULT_SONG as SongId,
+  /** 後ろで鳴り続ける和音（旧 pad）。キーは保存済みの設定のためそのまま */
   pad: true,
   padLevel: 0.5,
   rotate: false,
@@ -74,7 +77,7 @@ const DEFAULTS = {
 const params = { ...DEFAULTS };
 
 /** 配置（SceneData）側で持つ値と、保存しない値。残りをこの端末の設定として自動保存する（D24） */
-const NOT_PREFS = new Set<string>(['bpm', 'pattern', 'rotate', 'rotationSpeed', 'drift', 'driftAmp', 'tool', 'muted', 'midiOutput', 'colorMode']);
+const NOT_PREFS = new Set<string>(['bpm', 'pattern', 'song', 'rotate', 'rotationSpeed', 'drift', 'driftAmp', 'tool', 'muted', 'midiOutput', 'colorMode']);
 function currentPrefs(): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(params)) if (!NOT_PREFS.has(k)) out[k] = v;
@@ -113,6 +116,7 @@ function applySceneParams(scene: SceneData): void {
   params.rotationSpeed = scene.rotationSpeed;
   params.drift = scene.drift.mode;
   params.driftAmp = scene.drift.amp;
+  params.song = scene.song ?? DEFAULT_SONG;
 }
 
 Audio.setupContext();
@@ -126,6 +130,7 @@ const sim = new Sim({
   bpm: params.bpm,
   pattern: PATTERNS[params.pattern]!,
   drift: { mode: params.drift, amp: params.driftAmp },
+  song: params.song,
 });
 if (stored) sim.enqueue({ kind: 'loadScene', scene: stored });
 else for (const c of DEMO) sim.enqueue(c);
@@ -141,7 +146,7 @@ const input = new Input(
 );
 // ドラッグ中に音程が変わったら小さく鳴らす（D11）。音高は今の区間のもの
 input.onPreviewNote = (slot) => {
-  if (started && !params.muted && params.internalSound) audio.tick(midiAt(slot, sim.sectionAt(sim.step)));
+  if (started && !params.muted && params.internalSound) audio.tick(midiAt(slot, sim.sectionAt(sim.step), sim.song));
 };
 // ボールは表示されている範囲から出るまで生かす（D23）
 const syncView = () => sim.enqueue({ kind: 'setView', bounds: { ...renderer.viewBounds } });
@@ -150,6 +155,7 @@ const setTool = (t: Tool) => {
   params.tool = t;
   input.setTool(t);
   toolbar.setTool(t);
+  toolbar.flashTool(t);
 };
 // 図形のメニュー（D32）: 長押し・右クリックでエフェクトを付け外し、図形を消す
 const shapeMenu = new ShapeMenu(document.body);
@@ -181,6 +187,7 @@ const toolbar = new Toolbar(document.body, TOOLS, {
   motion: (anchor) => togglePopover('motion', anchor),
   light: (anchor) => togglePopover('light', anchor),
   scenes: (anchor) => togglePopover('scenes', anchor),
+  settings: () => toggleSettings(),
   fullscreen: () => toggleFullscreen(),
 });
 toolbar.el.classList.add('ui');
@@ -201,9 +208,22 @@ const scenes = new ScenesPopover(document.body, {
   copyLink: () => void copySceneUrl(),
 });
 
+const choices = <V,>(values: readonly V[], label?: (v: V) => string) => () =>
+  values.map((value) => ({ value, label: label?.(value) }));
+
 // 動きと光: 直感的に触れるつまみだけ。0 にするとオフ
 const motionPop = new Popover(document.body);
+/** 最後に選んだ揺れ方と、move をオフにする前に回っていたか。オンに戻すとこれに戻す */
+let lastStyle: DriftMode = 'drift';
+let lastRotate = false;
 const motionKnobs = {
+  /** 回るか揺れるか。オフにすると両方止め、オンで止める前に戻す */
+  get move() { return params.rotate || params.drift !== 'off'; },
+  set move(on: boolean) {
+    if (!on) lastRotate = params.rotate;
+    params.rotate = on && lastRotate;
+    params.drift = on ? lastStyle : 'off';
+  },
   get spin() { return params.rotate ? params.rotationSpeed : 0; },
   set spin(v: number) {
     params.rotate = v > 0;
@@ -213,29 +233,46 @@ const motionKnobs = {
   set sway(v: number) {
     if (v <= 0) params.drift = 'off';
     else {
-      if (params.drift === 'off') params.drift = 'drift';
+      if (params.drift === 'off') params.drift = lastStyle;
       params.driftAmp = v;
     }
   },
+  /** 揺れ方。止まっているときは選ばれていない（選ぶと揺れ始める） */
+  get style() { return params.drift; },
+  set style(m: DriftMode) { params.drift = m; },
 };
 const offOr = (f: (v: number) => string) => (v: number) => (v <= 0 ? 'off' : f(v));
+const SWAY_LABELS: Partial<Record<DriftMode, string>> = { drift: 'glide', phrase: 'step' };
 {
   const m = motionPop.section();
+  m.toggle(motionKnobs, 'move', 'move', () => { setRotation(); setDrift(); });
   m.slider(motionKnobs, 'spin', { label: 'spin', min: 0, max: 1, step: 0.01, format: offOr((v) => v.toFixed(2)), onChange: () => setRotation() });
   m.slider(motionKnobs, 'sway', { label: 'sway', min: 0, max: 80, step: 1, format: offOr(String), onChange: () => setDrift() });
+  m.choice(motionKnobs, 'style', 'sway style', choices(DRIFT_MODES.filter((d) => d !== 'off'), (d) => SWAY_LABELS[d]!), () => setDrift());
+  m.hint(() => ({ off: '', drift: 'emitters slide slowly back and forth', phrase: 'emitters jump to a new spot every 16 shots' })[params.drift]);
 }
 const lightPop = new Popover(document.body);
 {
-  const l = lightPop.section();
+  // 図形の光 / 当たったときに出るもの / 背景 の順に分ける（D45）
+  const l = lightPop.section('shapes');
   l.slider(params, 'bloomStrength', { label: 'glow', min: 0, max: 2, step: 0.01 });
-  l.slider(params, 'idleLine', { label: 'lines', min: 0.15, max: 0.45, step: 0.01 });
-  l.slider(params, 'afterimage', { label: 'trail', min: 0.7, max: 0.97, step: 0.005, format: (v) => v.toFixed(2) });
-  l.toggle(params, 'drip', 'drip');
-  l.slider(params, 'dripSpeed', { label: 'drip speed', min: 10, max: 300, step: 5, format: (v) => `${v}` });
-  l.toggle(params, 'flowers', 'flowers');
-  l.choice(params, 'backdrop', 'water', () => BACKDROPS.map((value) => ({ value })));
-  l.toggle(params, 'hud', 'hud');
-  l.slider(params, 'backdropLevel', { label: 'water level', min: 0.2, max: 2, step: 0.05, format: (v) => v.toFixed(2) });
+  l.hint('the halo around the light');
+  l.slider(params, 'idleLine', { label: 'at rest', min: 0.15, max: 0.45, step: 0.01 });
+  l.hint('how bright shapes are between hits');
+  // trail style が blur のときは残像の長さが決まっている（render の LEGACY_DAMP）ので薄くする
+  l.slider(params, 'afterimage', { label: 'trail', min: 0.7, max: 0.97, step: 0.005, format: (v) => v.toFixed(2), enabled: () => params.trail === 'geometry' });
+  l.hint(() => params.trail === 'geometry' ? 'how long the balls\' tails are' : 'only with the tail style (settings → display)');
+  const h = lightPop.section('on hit');
+  h.toggle(params, 'drip', 'drip');
+  h.slider(params, 'dripSpeed', { label: 'speed', min: 10, max: 300, step: 5, format: (v) => `${v}`, enabled: () => params.drip });
+  h.hint('light runs down from the shape that was hit');
+  h.toggle(params, 'flowers', 'flowers');
+  h.hint('a vine grows from the hit and blooms');
+  h.toggle(params, 'hud', 'readout');
+  h.hint('a small frame and coordinates flash where the ball hit');
+  const b = lightPop.section('backdrop');
+  b.choice(params, 'backdrop', 'kind', () => BACKDROPS.map((value) => ({ value })));
+  b.slider(params, 'backdropLevel', { label: 'level', min: 0.2, max: 2, step: 0.05, format: (v) => v.toFixed(2), enabled: () => params.backdrop !== 'none' });
 }
 
 type PopName = 'motion' | 'light' | 'scenes';
@@ -263,28 +300,30 @@ function closePopovers(): void {
 }
 
 // 細かい調整（普段は出さない。, キーで開く）
-const panel = new Panel(document.body);
+// ツールバーの小窓にないものだけを置く（D46）
+const panel = new Panel(document.body, 'settings');
 panel.el.classList.add('ui');
+panel.onClose = () => toggleSettings(false);
 function toggleSettings(open = !panel.isOpen): void {
   if (open) closePopovers();
   panel.setOpen(open);
+  if (open) toolbar.setOpenPopover('settings');
+  else if (!Object.values(popovers).some((p) => p.isOpen)) toolbar.setOpenPopover(null);
 }
 function toggleFullscreen(): void {
   if (document.fullscreenElement) void document.exitFullscreen();
   else void document.documentElement.requestFullscreen();
 }
 /**
- * 再生・停止（D30）。AudioContext ごと止めるので、音の時刻が止まり、sim も描画もその場で止まる。
- * 再生すると同じ時刻から続く（t0 を取り直す必要がない）。止めている間に描いた図形は、再生すると置かれる
+ * 再生・停止（D30 → D50）。時刻は止めず、球を出すのをやめ、回転と音をゆっくり止める。
+ * 落ちている途中の球はそのまま当たって鳴る（音は小さくなっていく）。続けると次の拍から球が出る
  */
 function setPaused(p: boolean): void {
   if (!started || p === paused) return;
   paused = p;
-  const ctx = audio.raw;
-  if (p) {
-    void ctx.suspend();
-    midi.allNotesOff();
-  } else void ctx.resume();
+  sim.enqueue({ kind: 'setPlaying', on: !p });
+  audio.setPlaying(!p);
+  if (p) midi.allNotesOff();
   toolbar.setPaused(p);
 }
 function toggleMute(): void {
@@ -299,32 +338,41 @@ const setTempo = () => {
   sim.enqueue({ kind: 'setTempo', bpm: params.bpm, pattern: PATTERNS[params.pattern]! });
   if (started) audio.setBpm(params.bpm);
 };
+const setSong = () => {
+  sim.enqueue({ kind: 'setSong', song: params.song });
+  if (started) audio.setSong(params.song);
+};
 const setRotation = () => sim.enqueue({ kind: 'setRotation', on: params.rotate, speed: params.rotationSpeed });
-const setDrift = () => sim.enqueue({ kind: 'setDrift', mode: params.drift, amp: params.driftAmp });
-const choices = <V,>(values: readonly V[], label?: (v: V) => string) => () =>
-  values.map((value) => ({ value, label: label?.(value) }));
+const setDrift = () => {
+  if (params.drift !== 'off') lastStyle = params.drift;
+  sim.enqueue({ kind: 'setDrift', mode: params.drift, amp: params.driftAmp });
+};
 
 const sound = panel.section('Sound');
-sound.choice(params, 'pattern', 'pattern', () => Object.keys(PATTERNS).map((value) => ({ value })), setTempo);
-sound.toggle(params, 'pad', 'pad', (on) => started && audio.setPad(on));
-sound.slider(params, 'padLevel', { label: 'pad level', min: 0, max: 1, step: 0.01, onInput: (v) => started && audio.setPadLevel(v) });
+sound.choice(params, 'pattern', 'rhythm', () => Object.keys(PATTERNS).map((value) => ({ value })), setTempo);
+sound.hint(() => {
+  const beats = PATTERNS[params.pattern]!;
+  return `${beats.length} emitters drop a ball every ${beats.join(' / ')} beats`;
+});
+// 曲: 和音の進み方・調・後ろの和音の音色をまとめて選ぶ（D48）
+sound.choice(params, 'song', 'song', choices(SONG_IDS), setSong);
+sound.hint('changes the chords of every sound, shapes included');
+sound.toggle(params, 'pad', 'hum', (on) => started && audio.setPad(on));
+sound.slider(params, 'padLevel', {
+  label: 'hum vol', min: 0, max: 1, step: 0.01, enabled: () => params.pad, onInput: (v) => started && audio.setPadLevel(v),
+});
+sound.hint('a soft tone that keeps playing the song\'s chord in the background');
 sound.slider(params, 'stereoWidth', { label: 'stereo', min: 0, max: 1, step: 0.05, onInput: (v) => started && audio.setStereoWidth(v) });
 
-const motion = panel.section('Motion', false);
-motion.toggle(params, 'rotate', 'rotate', setRotation);
-motion.slider(params, 'rotationSpeed', { label: 'speed', min: 0.05, max: 1, step: 0.01, onChange: setRotation });
-motion.choice(params, 'drift', 'drift', choices(DRIFT_MODES), setDrift);
-motion.slider(params, 'driftAmp', { label: 'amount', min: 0, max: 80, step: 1, onChange: setDrift });
-
-const light = panel.section('Light', false);
-light.slider(params, 'bloomStrength', { label: 'glow', min: 0, max: 2, step: 0.01 });
-light.slider(params, 'idleLine', { label: 'lines', min: 0.15, max: 0.45, step: 0.01 });
-light.choice(params, 'backdrop', 'water', choices(BACKDROPS));
-light.toggle(params, 'hud', 'hud');
-light.choice(params, 'trail', 'trail', choices(TRAILS));
-light.slider(params, 'afterimage', { label: 'afterimage', min: 0.7, max: 0.97, step: 0.005, format: (v) => v.toFixed(2) });
-light.slider(params, 'visualOffsetMs', { label: 'light delay', min: -150, max: 40, step: 1, format: (v) => `${v} ms` });
-light.choice(params, 'pixelRatio', 'resolution', choices(PIXEL_RATIOS, (r) => `×${r}`), (r) => renderer.setPixelRatio(r));
+// glow・lines・trail の長さ・背景は light の小窓。ここは会場で合わせるもの
+const display = panel.section('Display');
+const TRAIL_LABELS = { geometry: 'tail', afterimage: 'blur' } as const;
+display.choice(params, 'trail', 'trail style', choices(TRAILS, (t) => TRAIL_LABELS[t]));
+display.hint(() => params.trail === 'geometry' ? 'balls draw a tail behind them' : 'no tail, the screen keeps a short blur');
+display.slider(params, 'visualOffsetMs', { label: 'light delay', min: -150, max: 40, step: 1, format: (v) => `${v} ms` });
+display.hint('lower it if the light comes before the sound (e.g. bluetooth)');
+display.choice(params, 'pixelRatio', 'resolution', choices(PIXEL_RATIOS, (r) => `×${r}`), (r) => renderer.setPixelRatio(r));
+display.hint('higher is sharper but heavier');
 
 const midiPane = panel.section('MIDI', false);
 const midi = new Midi({
@@ -356,6 +404,16 @@ async function connectMidi(): Promise<void> {
     connectBtn.textContent = Midi.supported ? 'permission denied' : 'unsupported (use Chrome)';
   }
   panel.refresh();
+}
+
+// キー操作の一覧（画面下の案内は少しで消えるので、ここでいつでも見られるように）
+if (!matchMedia('(hover: none)').matches) {
+  const keys = panel.section('Keys', false);
+  for (const [k, what] of [
+    ['drag', 'draw'], ['shift + drag', 'bumper'], ['right-click', 'shape effects / delete'],
+    ['1 – 5', 'tools'], ['space', 'pause'], ['M', 'mute'], ['C', 'clear all shapes'],
+    ['S', 'copy scene link'], ['R', 'record .mid'], ['F', 'fullscreen'], ['H', 'hide ui'], [',', 'this panel'],
+  ] as const) keys.info(k, what);
 }
 
 panel.section('', true).actions([{ label: 'reset settings', title: 'shapes are kept', onClick: () => resetSettings() }]);
@@ -394,7 +452,10 @@ function loadSceneData(scene: SceneData): void {
   if (midi.isRecording) toggleRecording();
   applySceneParams(scene);
   sim.enqueue({ kind: 'loadScene', scene });
-  if (started) audio.setBpm(scene.bpm);
+  if (started) {
+    audio.setBpm(scene.bpm);
+    audio.setSong(params.song);
+  }
   toolbar.setTempo(params.bpm);
   panel.refresh();
 }
@@ -430,6 +491,7 @@ function resetSettings(): void {
   setTempo();
   setRotation();
   setDrift();
+  setSong();
   applyPrefs();
   toolbar.setTempo(params.bpm);
   toolbar.setVolume(params.volume);
@@ -532,8 +594,6 @@ addEventListener('resize', layout);
 // ---- 開始 ----
 let started = false;
 let paused = false;
-/** 直近に描いた renderStep（止めている間はここで止める） */
-let lastRs = -1;
 let t0 = 0;
 const overlay = document.getElementById('overlay')!;
 // iOS Safari は pointerdown では音を出させてくれないので click で始める
@@ -546,6 +606,7 @@ overlay.addEventListener('click', async () => {
   await audio.start(params.bpm);
   audio.setVolume(params.volume);
   audio.setStereoWidth(params.stereoWidth);
+  audio.setSong(params.song);
   audio.setPad(params.pad);
   audio.setPadLevel(params.padLevel);
   audio.setMuted(params.muted);
@@ -557,6 +618,7 @@ overlay.addEventListener('click', async () => {
   t0 = ctx.currentTime + 0.1;
   started = true;
   overlay.remove();
+  toolbar.showHelp();
 });
 
 // 音の時計（D29）: getOutputTimestamp は音声スレッドを待って固まることがあるので使わない
@@ -585,15 +647,6 @@ function frame(now: number): void {
     return;
   }
 
-  if (paused) {
-    // 置いた・消した図形はすぐ反映する（置いた音は鳴らさない）。経過時間 0 で描き直すので、絵は止まったまま
-    sim.applyPending();
-    renderer.push(sim.drainEvents());
-    renderer.applyEditsNow();
-    renderer.render(sim, lastRs, 0, input.preview);
-    return;
-  }
-
   const ctx = audio.raw;
   const ct = ctx.currentTime;
   clock.update(ct, now);
@@ -613,9 +666,9 @@ function frame(now: number): void {
       midi.record(e); // 録音は step 基準なので、遅れて捨てる衝突も入れる
       if (time < ct - LATE_DROP) continue; // 音も光も捨てる
       if (params.internalSound) audio.play(e, Math.max(time, ct));
-      if (!params.muted) midi.play(e, Math.max(time, ct), toPerf);
+      if (!params.muted && !paused) midi.play(e, Math.max(time, ct), toPerf);
     } else if (e.kind === 'section') {
-      audio.setSection(e.section, Math.max(time, ct));
+      audio.setSection(e.root, Math.max(time, ct));
     } else if (e.kind === 'shapeAdded') {
       // 確定音（D11: 入力へのフィードバック。MIDI には送らない）
       if (params.internalSound && time >= ct - LATE_DROP) audio.confirm(e.midi, Math.max(time, ct), e.form);
@@ -627,7 +680,6 @@ function frame(now: number): void {
 
   let rs = (clock.audible() - t0) * HZ + (params.visualOffsetMs / 1000) * HZ;
   rs = Math.min(sim.step - 1, Math.max(sim.step - HISTORY + 2, rs));
-  lastRs = rs;
   renderer.render(sim, rs, dt, input.preview);
 }
 requestAnimationFrame(frame);
@@ -673,16 +725,16 @@ setInterval(() => {
 
 // タブを隠すと rAF が止まり note off が送られないので、先に全部止める。
 // パッドは rAF と関係なく鳴り続けるので、AudioContext ごと止める（一時停止と同じく時刻も止まる）。
-// 戻ったら、自分で一時停止していなければ再開する。iOS は戻ったときに interrupted のままのことがあるので resume し直す（D41）
+// 戻ったら再開する。iOS は戻ったときに interrupted のままのことがあるので resume し直す（D41）
 function hideAudio(): void {
   midi.allNotesOff();
   if (started) void audio.raw.suspend();
 }
 addEventListener('visibilitychange', () => {
   if (document.hidden) hideAudio();
-  else if (started && !paused) void audio.raw.resume();
+  else if (started) void audio.raw.resume();
 });
 addEventListener('pagehide', hideAudio);
 addEventListener('pageshow', () => {
-  if (started && !paused && !document.hidden) void audio.raw.resume();
+  if (started && !document.hidden) void audio.raw.resume();
 });

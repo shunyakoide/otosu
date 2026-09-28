@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { driftOffset, hitAllowed, normalizePoints, segmentAngle, Sim } from '../src/sim/sim';
-import { formMidi, kickMidi, lengthToNote, midiAt, PROG, sectionAt, sectionSteps } from '../src/sim/music';
+import { formMidi, kickMidi, lengthToNote, midiAt, PROG, sectionAt, sectionRoot, sectionSteps, SONG_IDS, SONGS } from '../src/sim/music';
 import { inferForm } from '../src/sim/form';
 import { rayCapsule } from '../src/sim/collide';
 import {
@@ -139,6 +139,47 @@ describe('rotation (B1, B2, B6)', () => {
   });
 });
 
+describe('play / stop (D50)', () => {
+  it('stops emitting while stopped and resumes on the same beat grid', () => {
+    const emits = (ev: SimEvent[]) => ev.filter((e) => e.kind === 'emit').map((e) => `${e.step}/${e.kind === 'emit' && e.emitterId}`);
+    const ref = setup();
+    const all = emits(run(ref, 3000));
+    const sim = setup();
+    run(sim, 1000);
+    sim.enqueue({ kind: 'setPlaying', on: false });
+    const stopped = run(sim, 1000);
+    expect(emits(stopped)).toEqual([]);
+    sim.enqueue({ kind: 'setPlaying', on: true });
+    const after = emits(run(sim, 1000));
+    expect(after.length).toBeGreaterThan(0);
+    expect(after).toEqual(all.filter((e) => Number(e.split('/')[0]) >= 2000));
+  });
+
+  it('slows rotation down to a stop without jumping, and spins up again', () => {
+    const sim = setup(true);
+    run(sim, 500);
+    const w0 = Math.abs(sim.segments[0]!.omega);
+    sim.enqueue({ kind: 'setPlaying', on: false });
+    let prev = segmentAngle(sim.segments[0]!, sim.step);
+    let maxJump = 0;
+    const speeds: number[] = [];
+    for (let i = 0; i < 300; i++) {
+      run(sim, 1);
+      const a = segmentAngle(sim.segments[0]!, sim.step);
+      maxJump = Math.max(maxJump, Math.abs(a - prev));
+      prev = a;
+      speeds.push(Math.abs(sim.segments[0]!.omega));
+    }
+    expect(maxJump).toBeLessThanOrEqual(w0 / 120 + 1e-9);
+    expect(speeds[60]!).toBeLessThan(w0);
+    expect(speeds[60]!).toBeGreaterThan(0);
+    expect(speeds.at(-1)).toBe(0);
+    sim.enqueue({ kind: 'setPlaying', on: true });
+    run(sim, 300);
+    expect(Math.abs(sim.segments[0]!.omega)).toBeCloseTo(w0, 9);
+  });
+});
+
 describe('hit rules (D4 boundaries)', () => {
   it('velocity threshold', () => {
     expect(hitAllowed(100, V_MIN - 1e-9, undefined, -Infinity)).toBe(false);
@@ -238,6 +279,52 @@ describe('harmony', () => {
     expect(sim.sectionAt(3000)).toBe(1);
     expect(sim.sectionAt(3000 + 1919)).toBe(1);
     expect(sim.sectionAt(3000 + 1920)).toBe(2);
+  });
+
+  // D48: 曲を選べる
+  it('keeps every song smooth: 4 sections of 5 ascending pitch classes, neighbours within 3 semitones', () => {
+    for (const id of SONG_IDS) {
+      const song = SONGS[id];
+      expect(song.scales.length).toBe(PROG.length);
+      expect(song.roots.length).toBe(PROG.length);
+      for (const sc of song.scales) {
+        expect(sc.length).toBe(5);
+        for (let i = 1; i < 5; i++) expect(sc[i]!).toBeGreaterThan(sc[i - 1]!);
+      }
+      for (let slot = 0; slot < 16; slot++) {
+        for (let s = 0; s < PROG.length; s++) {
+          expect(Math.abs(midiAt(slot, s, id) - midiAt(slot, (s + 1) % PROG.length, id))).toBeLessThanOrEqual(3);
+        }
+      }
+    }
+    // 最初の曲はこれまでと同じ音
+    for (let s = 0; s < 4; s++) expect(midiAt(3, s, 'bright')).toBe(midiAt(3, s));
+  });
+
+  it('switches the song: hits use its scale, and a section event carries the new root', () => {
+    const sim = setup();
+    run(sim, 10);
+    sim.enqueue({ kind: 'setSong', song: 'dusk' });
+    const events = run(sim, 3000);
+    const sec = events.find((e) => e.kind === 'section');
+    expect(sec && sec.kind === 'section' && sec.root).toBe(sectionRoot(sec && sec.kind === 'section' ? sec.section : 0, 'dusk'));
+    const hits = hitsOf(events);
+    expect(hits.length).toBeGreaterThan(0);
+    for (const h of hits) expect(h.midi).toBe(formMidi(h.form, h.note, h.section, 'dusk'));
+    expect(sceneFromSim(sim).song).toBe('dusk');
+  });
+
+  it('saves the song in the scene only when it is not the default, and ignores unknown songs', () => {
+    const sim = setup();
+    run(sim, 1);
+    expect(sceneFromSim(sim).song).toBeUndefined();
+    const scene = { ...sceneFromSim(sim), song: 'wistful' };
+    expect(decodeScene(encodeScene(scene as SceneData))!.song).toBe('wistful');
+    expect(validateScene({ ...scene, song: 'nope' })!.song).toBeUndefined();
+    const loaded = new Sim({ bpm: 90, pattern: [2, 3] });
+    loaded.enqueue({ kind: 'loadScene', scene: scene as SceneData });
+    run(loaded, 1);
+    expect(loaded.song).toBe('wistful');
   });
 });
 
@@ -409,9 +496,9 @@ describe('chain / energy / section (D14)', () => {
   it('emits section events at start and on each change', () => {
     const ev = run(new Sim({ bpm: 90, pattern: [2] }), 2560 * 2 + 1).filter((e) => e.kind === 'section');
     expect(ev).toEqual([
-      { kind: 'section', step: 0, section: 0 },
-      { kind: 'section', step: 2560, section: 1 },
-      { kind: 'section', step: 5120, section: 2 },
+      { kind: 'section', step: 0, section: 0, root: 0 },
+      { kind: 'section', step: 2560, section: 1, root: 5 },
+      { kind: 'section', step: 5120, section: 2, root: 0 },
     ]);
   });
 

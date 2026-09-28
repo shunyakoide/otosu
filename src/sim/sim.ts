@@ -6,7 +6,7 @@ import {
   PLACE_BOUNDS, RISE_BEATS, RISE_COUNT, RISE_DECAY, TANGENT_KEEP, V_MIN, WORLD_BOUNDS, WORLD_W, impactVelocity, maxOmega, type Bounds,
 } from './constants';
 import { inferForm } from './form';
-import { chordSlots, formMidi, lengthToNote, riseSlot, sectionAt, sectionSteps } from './music';
+import { chordSlots, DEFAULT_SONG, formMidi, lengthToNote, riseSlot, sectionAt, sectionRoot, sectionSteps, type SongId } from './music';
 import type {
   Ball, Command, DriftMode, Emitter, HitEvent, SceneData, SegKind, Segment, ShapeAddedEvent, ShapeEffect, ShapeForm,
   SimEvent, Snapshot,
@@ -15,6 +15,10 @@ import type {
 const MAX_BOUNCES_PER_STEP = 4;
 const PUSH_OUT = 0.01;
 const EMITTER_Y = 40;
+/** 止める・続けるときに回転の速さが変わりきるまで（D50。2 秒） */
+const SPIN_FADE_STEPS = 2 * HZ;
+/** 回転の速さを変えている間、角速度を置き直す間隔（1/30 秒） */
+const SPIN_REBASE = HZ / 30;
 
 export type SimOptions = {
   bpm: number;
@@ -22,7 +26,12 @@ export type SimOptions = {
   pattern: readonly number[];
   /** 放出口の揺らぎ。省略時は drift / 24px */
   drift?: { mode: DriftMode; amp: number };
+  /** 曲（D48）。省略時は bright */
+  song?: SongId;
 };
+
+/** 0..1 をなめらかに（動き出し・止まり際をゆっくりに） */
+const smooth = (x: number): number => x * x * (3 - 2 * x);
 
 /** 回転の姿勢（図形の回転角 φ、または辺の向き） */
 type Rot = { theta0: number; omega: number; rotStartStep: number };
@@ -141,6 +150,10 @@ export class Sim {
   pattern: number[];
   rotating = false;
   rotationSpeed = 0.3;
+  /** 再生中か（D50）。止めている間は球を出さない（放出の番号は進めるので、続けると拍に合って出る） */
+  playing = true;
+  /** 回転の速さに掛ける 0..1。止めると SPIN_FADE_STEPS かけて 0 へ、続けると 1 へ */
+  spinScale = 1;
   driftMode: DriftMode = 'drift';
   driftAmp = DRIFT_AMP_DEFAULT;
   /** 表示されている範囲。ここから出たボールを消す（D23） */
@@ -165,6 +178,8 @@ export class Sim {
   private harmonyBase = 0;
   private sectionLen: number;
   private lastSection = -1;
+  /** 曲（D48）。音階と根音を決める */
+  song: SongId = DEFAULT_SONG;
   /** energy 用: 直近の衝突イベントのステップ（古い順） */
   private recentHits: number[] = [];
   /**
@@ -179,6 +194,7 @@ export class Sim {
   constructor(opts: SimOptions) {
     this.bpm = opts.bpm;
     this.pattern = [...opts.pattern];
+    if (opts.song) this.song = opts.song;
     if (opts.drift) this.setDrift(opts.drift.mode, opts.drift.amp);
     this.sectionLen = sectionSteps(opts.bpm, SECTION_BARS, HZ);
     for (let i = 0; i < HISTORY; i++) {
@@ -225,15 +241,11 @@ export class Sim {
     return this.segments.find((s) => s.id === segmentId)?.group;
   }
 
-  /** 時刻を進めずに、たまっている編集だけを今のステップで反映する（止めている間。D30） */
-  applyPending(): void {
-    this.applyCommands(this.step);
-  }
-
   advance(): void {
     const s = this.step;
     this.applyCommands(s);
     this.updateSection(s);
+    this.updateSpin(s);
     this.updatePoses(s);
     this.emit(s);
     this.integrate(s);
@@ -283,11 +295,17 @@ export class Sim {
             this.pushPose(sh, s);
           }
           break;
+        case 'setPlaying':
+          this.playing = cmd.on;
+          break;
         case 'setTempo':
           this.setTempo(s, cmd.bpm, cmd.pattern);
           break;
         case 'setDrift':
           this.setDrift(cmd.mode, cmd.amp);
+          break;
+        case 'setSong':
+          this.setSong(cmd.song);
           break;
         case 'setView': {
           // ワールドより狭くはしない（16:9 の中は常に見えている）。広げるのは置ける範囲の上限まで
@@ -348,6 +366,12 @@ export class Sim {
   }
 
 
+  /** 曲を変える。区間の数え方はそのままで、次のステップから新しい音階で鳴らす（後ろの和音も切り替える） */
+  private setSong(song: SongId): void {
+    this.song = song;
+    this.lastSection = -1;
+  }
+
   private setDrift(mode: DriftMode, amp: number): void {
     this.driftMode = mode;
     this.driftAmp = Math.min(DRIFT_AMP_MAX, Math.max(0, Math.round(amp)));
@@ -361,6 +385,7 @@ export class Sim {
     this.rotating = scene.rotate;
     this.rotationSpeed = scene.rotationSpeed;
     this.setDrift(scene.drift.mode, scene.drift.amp);
+    this.setSong(scene.song ?? DEFAULT_SONG);
     this.harmonyBase = 0;
     this.harmonyAnchor = s;
     this.bpm = scene.bpm;
@@ -450,7 +475,7 @@ export class Sim {
       segKind: kind,
       form,
       note,
-      midi: formMidi(form, note, this.sectionAt(s)),
+      midi: formMidi(form, note, this.sectionAt(s), this.song),
       closed,
       dir: shape.dir,
       effect,
@@ -469,7 +494,7 @@ export class Sim {
     const was = sh.omega;
     sh.theta0 = shapeAngle(sh, s);
     sh.rotStartStep = s;
-    sh.omega = this.rotating ? sh.dir * Math.min(this.rotationSpeed, maxOmega(sh.radius)) : 0;
+    sh.omega = this.rotating ? sh.dir * Math.min(this.rotationSpeed, maxOmega(sh.radius)) * smooth(this.spinScale) : 0;
     for (const seg of sh.segs) {
       seg.theta0 = Math.atan2(seg.rby - seg.ray, seg.rbx - seg.rax) + sh.theta0;
       seg.rotStartStep = s;
@@ -520,7 +545,20 @@ export class Sim {
     const sec = this.sectionAt(s);
     if (sec === this.lastSection) return;
     this.lastSection = sec;
-    this.events.push({ kind: 'section', step: s, section: sec });
+    this.events.push({ kind: 'section', step: s, section: sec, root: sectionRoot(sec, this.song) });
+  }
+
+  /** 止める・続けるときに回転の速さをゆっくり変える。SPIN_REBASE ステップごとに角速度を置き直す（角度は連続） */
+  private updateSpin(s: number): void {
+    const target = this.playing ? 1 : 0;
+    if (this.spinScale === target) return;
+    const d = 1 / SPIN_FADE_STEPS;
+    this.spinScale = target > this.spinScale ? Math.min(target, this.spinScale + d) : Math.max(target, this.spinScale - d);
+    if (!this.rotating || (this.spinScale !== target && s % SPIN_REBASE !== 0)) return;
+    for (const sh of this.shapes.values()) {
+      this.setShapeRotation(sh, s);
+      this.pushPose(sh, s);
+    }
   }
 
   private updateShapePose(sh: Shape, s: number): void {
@@ -551,6 +589,7 @@ export class Sim {
       if (at !== s) continue;
       em.x = this.baseXs[em.id]! + driftOffset(this.driftMode, this.driftAmp, em.id, em.nextK);
       em.nextK++;
+      if (!this.playing) continue;
       const ball: Ball = {
         id: this.nextBallId++,
         emitterId: em.id,
@@ -675,7 +714,7 @@ export class Sim {
       normalSpeed: impact,
       velocity: impactVelocity(impact),
       note: sh.note,
-      midi: formMidi(sh.form, sh.note, section),
+      midi: formMidi(sh.form, sh.note, section, this.song),
       section,
       group: seg.group,
       segKind: seg.kind,
@@ -698,7 +737,7 @@ export class Sim {
     if (sh.effect === 'chord') {
       chordSlots(sh.form, sh.note).forEach((note, i) => {
         this.events.push({
-          ...ev, voice: i + 1, note, midi: formMidi(sh.form, note, ev.section), velocity: ev.velocity * CHORD_GAIN,
+          ...ev, voice: i + 1, note, midi: formMidi(sh.form, note, ev.section, this.song), velocity: ev.velocity * CHORD_GAIN,
         });
       });
     } else if (sh.effect === 'echo' || sh.effect === 'rise') {
@@ -726,7 +765,7 @@ export class Sim {
       }
       const section = this.sectionAt(s);
       this.events.push({
-        ...r.ev, step: s, echo: r.k, note, section, midi: formMidi(r.ev.form, note, section),
+        ...r.ev, step: s, echo: r.k, note, section, midi: formMidi(r.ev.form, note, section, this.song),
         velocity: r.ev.velocity * Math.pow(rise ? RISE_DECAY : ECHO_DECAY, r.k),
       });
       r.k++;

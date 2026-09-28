@@ -900,31 +900,6 @@ export class Renderer {
     return s;
   }
 
-  /**
-   * 止めている間の編集（D30）: 図形の追加・削除・向きは renderStep を待たずにすぐ反映する。
-   * 描画の時刻が止まっているので、消す図形は消える動きなしで消す
-   */
-  applyEditsNow(): void {
-    const rest: SimEvent[] = [];
-    for (const e of this.pending) {
-      if (e.kind === 'shapeAdded') this.addShape(e);
-      else if (e.kind === 'shapeRemoved') this.dropShape(e.group);
-      else if (e.kind === 'shapeEffect') {
-        const s = this.shapes.get(e.group);
-        if (s) s.effect = e.effect;
-      }
-      else if (e.kind === 'shapePose') {
-        const s = this.shapes.get(e.group);
-        if (s) {
-          s.theta0 = e.theta0;
-          s.rotStartStep = e.rotStartStep;
-          s.omega = e.omega;
-        }
-      } else rest.push(e);
-    }
-    this.pending = rest;
-  }
-
   /** 同じステップで複数の図形が消えた（clear / loadScene）ときは左から右へ拭うように消す */
   private stagger(group: Dying[]): void {
     if (group.length < 2) return;

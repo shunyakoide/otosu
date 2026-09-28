@@ -15,6 +15,8 @@ export type SliderOpts = {
   onInput?: (v: number) => void;
   /** 離したとき */
   onChange?: (v: number) => void;
+  /** false のあいだ薄くする（drip がオフのときの drip speed など） */
+  enabled?: () => boolean;
 };
 
 export type Choice<V> = { value: V; label?: string };
@@ -68,10 +70,12 @@ export class Section {
       input.value = String(v);
       input.style.setProperty('--p', `${((v - o.min) / (o.max - o.min)) * 100}%`);
       out.textContent = fmt(v);
+      if (o.enabled) r.classList.toggle('off', !o.enabled());
     };
     input.addEventListener('input', () => {
       (obj as Obj)[key] = Number(input.value);
-      show();
+      // ほかの行（motion の move など）がこの値で変わることがあるので、全部合わせる
+      for (const fn of this.refreshers) fn();
       o.onInput?.(obj[key] as number);
     });
     input.addEventListener('change', () => o.onChange?.(obj[key] as number));
@@ -87,7 +91,8 @@ export class Section {
     const show = () => b.classList.toggle('on', Boolean(obj[key]));
     b.addEventListener('click', () => {
       (obj as Obj)[key] = !obj[key];
-      show();
+      // これに付くつまみ（enabled）の表示も合わせる
+      for (const fn of this.refreshers) fn();
       onChange?.(obj[key] as boolean);
     });
     r.appendChild(b);
@@ -114,7 +119,7 @@ export class Section {
             b.type = 'button';
             b.addEventListener('click', () => {
               (obj as Obj)[key] = c.value;
-              show();
+              for (const fn of this.refreshers) fn();
               onChange?.(c.value);
             });
             return b;
@@ -166,6 +171,18 @@ export class Section {
     return buttons;
   }
 
+  /** 文字だけの行（キー操作の一覧など） */
+  info(label: string, text: string): void {
+    this.row(label).appendChild(el('span', 'pn-info', text));
+  }
+
+  /** 直前の行の下に出す小さな説明。選んでいる値で変えるときは関数で渡す */
+  hint(text: string | (() => string)): void {
+    const h = el('div', 'pn-hint');
+    this.body.appendChild(h);
+    this.onRefresh(() => { h.textContent = typeof text === 'string' ? text : text(); });
+  }
+
   /** 表示を合わせる処理を足す（自前の要素用） */
   onRefresh(fn: () => void): void {
     this.refreshers.push(fn);
@@ -175,16 +192,29 @@ export class Section {
 
 export class Panel {
   readonly el: HTMLElement;
+  /** × で閉じたとき */
+  onClose: (() => void) | null = null;
   private readonly scroll: HTMLElement;
   private readonly note: HTMLElement;
   private readonly refreshers: (() => void)[] = [];
   private noteTimer = 0;
 
-  constructor(parent: HTMLElement) {
-    this.el = el('aside', 'pn');
+  constructor(parent: HTMLElement, title: string) {
+    this.el = el('aside', 'pn pn-panel');
+    // 見出しと閉じるボタン（タッチでは , キーが使えないので、閉じる手段をここに置く）
+    const top = el('header', 'pn-top');
+    const close = el('button', 'pn-close', '×');
+    close.type = 'button';
+    close.title = 'close (,)';
+    close.setAttribute('aria-label', 'close');
+    close.addEventListener('click', () => {
+      this.setOpen(false);
+      this.onClose?.();
+    });
+    top.append(el('span', 'pn-title', title), close);
     this.scroll = el('div', 'pn-scroll');
     this.note = el('div', 'pn-note');
-    this.el.append(this.scroll, this.note);
+    this.el.append(top, this.scroll, this.note);
     // 押したボタンにフォーカスが残ると、Space でもう一度押してしまうので外す
     this.el.addEventListener('click', (e) => {
       if (e.target instanceof HTMLButtonElement) e.target.blur();
@@ -241,9 +271,11 @@ export class Popover {
     });
   }
 
-  /** 見出しなしの区切り */
+  /** 区切り。title は畳まない小見出し */
   section(title = ''): Section {
-    return new Section(this.body, title, true, this.refreshers);
+    const s = new Section(this.body, '', true, this.refreshers);
+    if (title) s.root.prepend(el('div', 'pn-sub', title));
+    return s;
   }
 
   get isOpen(): boolean {

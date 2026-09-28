@@ -4,6 +4,7 @@
 
 import { DRIFT_AMP_MAX, MAX_SEGS, MAX_SHAPE_EDGES, MIN_LINE_LEN, PLACE_BOUNDS } from '../sim/constants';
 import { inferForm, isShapeEffect, isShapeForm } from '../sim/form';
+import { DEFAULT_SONG, isSongId } from '../sim/music';
 import type { Sim } from '../sim/sim';
 import type { DriftMode, SceneData, SceneShape, SegKind, ShapeEffect, ShapeForm } from '../sim/types';
 
@@ -35,6 +36,8 @@ export function sceneFromSim(sim: Sim): SceneData {
     shapes,
     forms,
   };
+  // 曲が最初の曲なら書かない（リンクを短く保つ。D48）
+  if (sim.song !== DEFAULT_SONG) scene.song = sim.song;
   // エフェクトが1つもなければ書かない（リンクを短く保つ）
   if (effects.some((e) => e !== 'none')) scene.effects = effects;
   return scene;
@@ -151,6 +154,7 @@ export function validateScene(raw: unknown): SceneData | null {
     rotate: r.rotate,
     rotationSpeed: clamp(r.rotationSpeed, 0, 2),
     drift: { mode: d.mode as DriftMode, amp: clamp(Math.round(d.amp), 0, DRIFT_AMP_MAX) },
+    ...(isSongId(r.song) && r.song !== DEFAULT_SONG ? { song: r.song } : {}),
     shapes,
     forms,
     ...(effects.some((e) => e !== 'none') ? { effects } : {}),

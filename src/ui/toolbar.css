@@ -1,0 +1,75 @@
+/* 画面上端のツールバー（D24）。背景を付けず、アイコンの明るさだけで状態を見せる（D45） */
+#toolbar {
+  position: fixed; left: 50%; top: 6px; transform: translateX(-50%); height: 40px;
+  display: flex; align-items: center; gap: 2px;
+}
+#toolbar button {
+  width: 34px; height: 34px; padding: 7px; border: 0; border-radius: 8px;
+  background: none; color: var(--ui-dim); cursor: pointer; transition: color 0.15s;
+}
+#toolbar button:hover { color: var(--ui-text); }
+#toolbar button.on { color: var(--ui-strong); }
+#toolbar button:focus-visible { outline: 1px solid var(--ui-faint); outline-offset: -2px; }
+#toolbar button svg { width: 100%; height: 100%; display: block; }
+#toolbar i { width: 1px; height: 16px; margin: 0 6px; background: var(--ui-line); }
+
+/* テンポ: − 90 + */
+#toolbar .tb-tempo { display: flex; align-items: center; }
+#toolbar .tb-tempo button { width: 22px; padding: 5px 3px; }
+#toolbar .tb-tempo span {
+  min-width: 26px; text-align: center; font-size: 12px; font-variant-numeric: tabular-nums;
+  color: var(--ui-text); cursor: ns-resize;
+}
+#toolbar .tb-tempo span::after { content: 'bpm'; margin-left: 3px; font-size: var(--fs-s); color: var(--ui-faint); }
+
+/* 音量: 細い線と小さな丸 */
+#toolbar .tb-volume { display: flex; align-items: center; }
+#toolbar .tb-volume input {
+  --p: 90%; width: 64px; height: 16px; margin: 0 6px 0 0; background: none;
+  -webkit-appearance: none; appearance: none; cursor: pointer; transition: opacity 0.15s;
+}
+#toolbar .tb-volume input::-webkit-slider-runnable-track {
+  height: 1px; background: linear-gradient(to right, rgba(255, 255, 255, 0.6) var(--p), var(--ui-line) var(--p));
+}
+#toolbar .tb-volume input::-webkit-slider-thumb {
+  -webkit-appearance: none; width: 8px; height: 8px; margin-top: -3.5px; border-radius: 50%; background: var(--ui-strong);
+}
+#toolbar .tb-volume input::-moz-range-track { height: 1px; background: var(--ui-line); }
+#toolbar .tb-volume input::-moz-range-progress { height: 1px; background: rgba(255, 255, 255, 0.6); }
+#toolbar .tb-volume input::-moz-range-thumb { width: 8px; height: 8px; border: 0; border-radius: 50%; background: var(--ui-strong); }
+/* ミュート中: スピーカーは × の形で白く、音量の線は薄く */
+#toolbar.muted .tb-volume input { opacity: 0.25; }
+#toolbar input:focus { outline: none; }
+
+/* 操作の案内: 始めてからしばらく出して消す */
+#toolbar-help {
+  position: fixed; left: 16px; bottom: calc(12px + env(safe-area-inset-bottom)); right: 16px;
+  font-size: var(--fs-s); letter-spacing: 0.06em; line-height: 1.6; color: var(--ui-faint);
+  pointer-events: none; transition: opacity 1.2s;
+}
+#toolbar-help.gone { opacity: 0; }
+#toolbar-help kbd { font: inherit; color: var(--ui-dim); }
+
+/* 道具を選んだときの名前と音色 */
+#toolbar-tip {
+  position: fixed; left: 50%; transform: translateX(-50%);
+  font-size: var(--fs-s); letter-spacing: 0.06em; color: var(--ui-dim);
+  pointer-events: none; transition: opacity 0.4s;
+}
+#toolbar-tip.gone { opacity: 0; transition-duration: 0.8s; }
+
+/* タッチ: 指で押しやすい大きさにする。狭い画面ではツールバーを折り返す（帯の高さは main が測る） */
+@media (hover: none) {
+  #toolbar button { width: 40px; height: 40px; padding: 10px; }
+  #toolbar button:hover { color: var(--ui-dim); }
+  #toolbar button.on:hover { color: var(--ui-strong); }
+  #toolbar .tb-tempo button { width: 32px; padding: 10px 6px; }
+}
+@media (max-width: 640px) {
+  #toolbar {
+    top: calc(4px + env(safe-area-inset-top)); width: calc(100vw - 12px); height: auto;
+    flex-wrap: wrap; justify-content: center; gap: 0 2px;
+  }
+  #toolbar i { display: none; }
+  #toolbar-help { text-align: center; }
+}

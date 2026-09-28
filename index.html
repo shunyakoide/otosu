@@ -12,75 +12,37 @@
       html, body { margin: 0; height: 100%; background: #000; overflow: hidden; overscroll-behavior: none; }
       /* 連打で拡大・長押しで文字選択・タップの灰色の光が出ないように */
       body { touch-action: manipulation; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; -webkit-tap-highlight-color: transparent; }
-      body { font-family: ui-sans-serif, system-ui, sans-serif; color: #e8ecf2; }
+      /* UI の色と文字（D45）。白黒だけ（D37）で、明るさの段で区別する */
+      :root {
+        --ui-rgb: 232, 236, 242;
+        --ui-strong: #fff;
+        --ui-text: rgba(var(--ui-rgb), 0.82);
+        --ui-dim: rgba(var(--ui-rgb), 0.45);
+        --ui-faint: rgba(var(--ui-rgb), 0.28);
+        --ui-line: rgba(255, 255, 255, 0.08);
+        --ui-bg: rgba(0, 0, 0, 0.66);
+        --ui-radius: 12px;
+        --fs: 11.5px;
+        --fs-s: 10.5px;
+        --fs-l: 13px;
+      }
+      body { font-family: ui-sans-serif, system-ui, sans-serif; color: rgb(var(--ui-rgb)); }
       body.idle, body.idle canvas { cursor: none; }
       canvas { display: block; cursor: crosshair; touch-action: none; }
       #overlay {
         position: fixed; inset: 0; display: grid; place-items: center;
-        background: #000; cursor: pointer; letter-spacing: 0.3em; font-size: 14px;
+        z-index: 30; background: #000; cursor: pointer; letter-spacing: 0.3em; font-size: 14px;
         user-select: none;
       }
       #overlay b { display: block; font-size: 40px; font-weight: 300; letter-spacing: 0.4em; margin-bottom: 16px; }
-      /* ---- UI（D24）: 操作が止まると消える。H で完全に隠す ---- */
+      /* ---- UI（D24）: 操作が止まると消える。H で完全に隠す。ツールバーの見た目は src/ui/toolbar.css ---- */
       .ui { transition: opacity 0.5s; }
       body.idle .ui:not(:hover):not(.pn) { opacity: 0; pointer-events: none; }
       body.ui-hidden .ui { display: none !important; }
-      #toolbar {
-        position: fixed; left: 50%; top: 6px; transform: translateX(-50%); height: 40px;
-        display: flex; align-items: center; gap: 2px;
-      }
-      #toolbar button {
-        width: 34px; height: 34px; padding: 7px; border: 0; border-radius: 8px;
-        background: none; color: rgba(232, 236, 242, 0.4); cursor: pointer;
-      }
-      #toolbar button:hover { color: rgba(232, 236, 242, 0.85); }
-      #toolbar button.on { color: #fff; }
-      #toolbar button.warn { color: #ff8a7a; }
-      #toolbar button svg { width: 100%; height: 100%; display: block; }
-      #toolbar .tb-tempo { display: flex; align-items: center; }
-      #toolbar .tb-tempo button { width: 22px; padding: 5px 3px; }
-      #toolbar .tb-tempo span {
-        min-width: 26px; text-align: center; font-size: 12px; font-variant-numeric: tabular-nums;
-        color: rgba(232, 236, 242, 0.75); cursor: ns-resize;
-      }
-      #toolbar .tb-tempo span::after { content: 'bpm'; margin-left: 3px; font-size: 9px; color: rgba(232, 236, 242, 0.35); }
-      #toolbar .tb-volume { display: flex; align-items: center; }
-      #toolbar .tb-volume input {
-        --p: 90%; width: 64px; height: 16px; margin: 0 6px 0 0; background: none;
-        -webkit-appearance: none; appearance: none; cursor: pointer;
-      }
-      #toolbar .tb-volume input::-webkit-slider-runnable-track {
-        height: 1px; background: linear-gradient(to right, rgba(255, 255, 255, 0.6) var(--p), rgba(255, 255, 255, 0.14) var(--p));
-      }
-      #toolbar .tb-volume input::-webkit-slider-thumb {
-        -webkit-appearance: none; width: 8px; height: 8px; margin-top: -3.5px; border-radius: 50%; background: #fff;
-      }
-      #toolbar .tb-volume input::-moz-range-track { height: 1px; background: rgba(255, 255, 255, 0.14); }
-      #toolbar .tb-volume input::-moz-range-progress { height: 1px; background: rgba(255, 255, 255, 0.6); }
-      #toolbar .tb-volume input::-moz-range-thumb { width: 8px; height: 8px; border: 0; border-radius: 50%; background: #fff; }
-      #toolbar.muted .tb-volume input { opacity: 0.3; }
-      #toolbar input:focus { outline: none; }
-      #toolbar i { width: 1px; height: 16px; margin: 0 6px; background: rgba(255, 255, 255, 0.12); }
-      #toolbar-help {
-        position: fixed; left: 16px; bottom: 12px; white-space: nowrap;
-        font-size: 11px; letter-spacing: 0.06em; opacity: 0.3; pointer-events: none;
-      }
-      @media (max-width: 520px) { #toolbar-help { display: none; } }
       .tap { display: none; }
-      /* ---- タッチ: ボタンを押しやすく。狭い画面ではツールバーを折り返す（帯の高さは main が測る） ---- */
       @media (hover: none) {
-        #toolbar button:hover { color: rgba(232, 236, 242, 0.4); }
-        #toolbar button.on:hover { color: #fff; }
-        #toolbar .tb-tempo button { width: 30px; }
         .click { display: none; }
         .tap { display: inline; }
-      }
-      @media (max-width: 640px) {
-        #toolbar {
-          top: calc(6px + env(safe-area-inset-top)); width: calc(100vw - 16px); height: auto;
-          flex-wrap: wrap; justify-content: center; row-gap: 2px;
-        }
-        #toolbar i { display: none; }
       }
     </style>
   </head>
