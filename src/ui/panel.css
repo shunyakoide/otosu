@@ -125,7 +125,7 @@
 /* 図形のメニュー（D32）: 長押し・右クリックした場所のそばに開く。指で押しやすい高さにする */
 .pn.shape-menu { top: 0; right: auto; z-index: 20; width: auto; min-width: 190px; padding: 6px 0; }
 .sm-item {
-  display: flex; align-items: baseline; gap: 12px; width: 100%; min-height: 40px; padding: 0 18px !important;
+  display: flex; align-items: center; gap: 12px; width: 100%; min-height: 40px; padding: 0 18px !important;
   text-align: left; color: var(--pn-dim) !important; font-size: var(--fs-l) !important;
 }
 .sm-item:hover { color: var(--pn-text) !important; }

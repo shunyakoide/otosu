@@ -1,0 +1,19 @@
+/* 操作中だけ画面の下に出す案内（D53）。面を付けず、文字の明るさだけで */
+#pointer-hint {
+  position: fixed; left: 16px; right: 16px; bottom: calc(12px + env(safe-area-inset-bottom));
+  text-align: center; font-size: var(--fs-s); letter-spacing: 0.06em; line-height: 1.6; color: var(--ui-dim);
+  pointer-events: none; opacity: 0; transition: opacity 0.3s;
+}
+#pointer-hint.show { opacity: 1; transition-duration: 0.15s; }
+#pointer-hint kbd { font: inherit; color: var(--ui-text); }
+body.hinting #toolbar-help { opacity: 0; transition-duration: 0.15s; }
+
+/* タッチの長押し: 文字の下の線を満たしていき、満ちたらメニューが開く */
+#pointer-hint .ph-bar { display: none; }
+#pointer-hint[data-kind='hold'] { color: var(--ui-text); }
+#pointer-hint[data-kind='hold'] .ph-bar {
+  display: block; width: 96px; height: 1px; margin: 6px auto 0; background: var(--ui-line);
+  background-image: linear-gradient(var(--ui-strong), var(--ui-strong)); background-repeat: no-repeat; background-size: 0 100%;
+  animation: ph-fill linear forwards;
+}
+@keyframes ph-fill { to { background-size: 100% 100%; } }

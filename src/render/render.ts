@@ -98,6 +98,10 @@ const DIE_SEC = 0.2;
 const WIPE_SEC = 0.3;
 const WIPE_DELAY_SEC = 0.15;
 const HOVER_TAU = 0.05;
+/** メニューを開いている図形をゆっくり明滅させる周期（秒、D54） */
+const SELECT_PERIOD = 1.6;
+/** そのとき、いちばん薄いところで消す割合 */
+const SELECT_FADE = 0.85;
 const EMITTER_TAU = 0.2;
 
 // バンパー: 二重線
@@ -415,6 +419,10 @@ export class Renderer {
   private readonly shapes = new Map<number, Shape>();
   private readonly dying = new Map<number, Dying>();
   private readonly hoverAmt = new Map<number, number>();
+  /** メニューを開いている図形（-1 でなし）。ゆっくり明滅させ、どれを選んだかわかるようにする（D54） */
+  selected = -1;
+  private selectedWas = -1;
+  private selectT = 0;
   private readonly ballLook = new Map<number, BallLook>();
   private readonly ballPath = new Map<number, number[]>();
   private readonly emitters = new Map<number, EmitterView>();
@@ -1285,6 +1293,13 @@ export class Renderer {
 
   private drawShapes(rs: number, dt: number, preview: Preview): void {
     this.updateHover(dt, preview);
+    if (this.selected !== this.selectedWas) {
+      this.selectedWas = this.selected;
+      this.selectT = 0;
+    }
+    this.selectT += dt;
+    // 0 → 1 → 0 をなめらかに（開いた瞬間はいつもの濃さから薄くなっていく）
+    const pulse = 0.5 - 0.5 * Math.cos((2 * Math.PI * this.selectT) / SELECT_PERIOD);
     this.nEdge = 0;
     this.nCap = 0;
     const mode = this.params.colorMode;
@@ -1355,6 +1370,10 @@ export class Renderer {
       }
       const hv = this.hoverAmt.get(s.group) ?? 0;
       base = Math.max(base, 0.3 + 0.3 * hv);
+      // メニューを開いている図形: 光らせるのではなく、線もエフェクトも薄くして戻すのをくり返す（D54）
+      const alpha = s.group === this.selected ? 1 - SELECT_FADE * pulse : 1;
+      base *= alpha;
+      spot *= alpha;
       tint.copy(noteColor(s.note, mode)).lerp(OFF_WHITE, white);
       const phi = shapeAngle(s, rs);
       const v = this.pose(s, phi, k);
@@ -1362,9 +1381,9 @@ export class Renderer {
         base, spot, sigma, sHit, vib);
       if (echo > 0.01) {
         const ve = this.pose(s, phi, echoK);
-        this.drawOutline(ve, s.n, s.closed, false, tint, 1, echo, 0, 1, 0, 0);
+        this.drawOutline(ve, s.n, s.closed, false, tint, 1, echo * alpha, 0, 1, 0, 0);
       }
-      if (s.effect !== 'none') this.drawFxRings(s, phi, rs, idle * FX_GAIN, mode, tint);
+      if (s.effect !== 'none') this.drawFxRings(s, phi, rs, idle * FX_GAIN * alpha, mode, tint);
     }
 
     // 当たるたびに外へ広がる輪郭（D32）。rise は上へ昇り、chord は重ねる音の色で広がる
@@ -1376,7 +1395,7 @@ export class Renderer {
       this.fxWaves[w++] = f;
       if (q < 0 || s.effect === 'none') continue;
       const e = easeOutCubic(q);
-      const a = FX_WAVE_GAIN * (0.3 + f.v) * (1 - q) ** 2;
+      const a = FX_WAVE_GAIN * (0.3 + f.v) * (1 - q) ** 2 * (f.group === this.selected ? 1 - SELECT_FADE * pulse : 1);
       const phi = shapeAngle(s, rs);
       if (s.effect === 'rise') {
         tint.copy(noteColor(Math.max(riseSlot(s.form, s.note, 1), s.note), mode));

@@ -19,6 +19,8 @@ const OFFSET = 14;
 export class ShapeMenu {
   /** 選んだとき。current は開いたときに付いていたエフェクト */
   onChoose: ((group: number, choice: ShapeMenuChoice, current: ShapeEffect) => void) | null = null;
+  /** 開いた・閉じたとき（group は閉じたとき -1）。main が図形を明滅させる（D54） */
+  onTarget: ((group: number) => void) | null = null;
   private readonly el: HTMLElement;
   private readonly buttons = new Map<ShapeMenuChoice, HTMLButtonElement>();
   private group = -1;
@@ -58,6 +60,7 @@ export class ShapeMenu {
     this.current = effect;
     for (const [v, b] of this.buttons) b.classList.toggle('on', v === effect);
     this.el.classList.add('open');
+    this.onTarget?.(group);
     // 右上に開き、はみ出すなら反対側へ
     const w = this.el.offsetWidth;
     const h = this.el.offsetHeight;
@@ -72,7 +75,9 @@ export class ShapeMenu {
   }
 
   close(): void {
+    if (!this.isOpen) return;
     this.el.classList.remove('open');
     this.group = -1;
+    this.onTarget?.(-1);
   }
 }

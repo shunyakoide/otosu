@@ -16,6 +16,7 @@ import {
 import { Panel, Popover } from './ui/panel';
 import { ScenesPopover } from './ui/scenes';
 import { ShapeMenu } from './ui/shapeMenu';
+import { PointerHint } from './ui/hint';
 import { Toolbar } from './ui/toolbar';
 
 // 時計は AudioContext の1本（decisions.md D3, D8）。
@@ -163,6 +164,10 @@ input.onShapeMenu = (group, x, y) => {
   const sh = sim.shapes.get(group);
   if (sh) shapeMenu.open(group, sh.effect, x, y);
 };
+// 操作しているときだけ、画面の下にその場で使える操作を出す（D53）
+const pointerHint = new PointerHint(document.body);
+input.onHint = (kind, ms) => (kind ? pointerHint.show(kind, ms) : pointerHint.hide());
+shapeMenu.onTarget = (group) => (renderer.selected = group);
 shapeMenu.onChoose = (group, choice, current) => {
   if (!sim.shapes.has(group)) return;
   if (choice === 'delete') sim.enqueue({ kind: 'removeShape', group });

@@ -2,6 +2,7 @@ import { MIN_LINE_LEN, type Bounds } from '../sim/constants';
 import { lengthToNote } from '../sim/music';
 import { normalizePoints, type Sim } from '../sim/sim';
 import type { Preview } from '../render/render';
+import type { HintKind } from '../ui/hint';
 
 // ツールで図形を描く／右クリック（タッチでは長押し）で図形のメニューを開く（エフェクト・削除、D32）。座標はすべて論理ワールド座標（D8-7）。
 // 消去とホバーの判定は描画側（表示中の図形・描画中の時刻の姿勢）に任せる（B3, D12）。
@@ -16,6 +17,8 @@ export type ShapePicker = (x: number, y: number) => number;
 const HOVER_IDLE_MS = 2000;
 /** タッチ: この時間ほぼ動かさずに押し続けると、その場所の図形のメニューを開く（右クリックの代わり） */
 const LONG_PRESS_MS = 550;
+/** タッチ: 図形を押さえてからこの時間で長押しの案内を出す（すぐ描き始めたときに、ちらつかないように。D53） */
+const HOLD_HINT_MS = 150;
 /** 長押しとみなす指のぶれ（CSS px） */
 const LONG_PRESS_SLOP = 10;
 /** ペン: 生の点の間隔・RDP の許容誤差・辺の上限（D12） */
@@ -86,6 +89,8 @@ export class Input {
   onPreviewNote: ((slot: number) => void) | null = null;
   /** 図形を長押し・右クリックしたときに呼ぶ（x, y は画面の座標）。main がメニューを開く */
   onShapeMenu: ((group: number, x: number, y: number) => void) | null = null;
+  /** 操作の案内を出す・消す（D53）。ms は長押しの線を満たす時間 */
+  onHint: ((kind: HintKind | null, ms?: number) => void) | null = null;
 
   private tool: Tool = 'line';
   private readonly sim: Sim;
@@ -102,6 +107,7 @@ export class Input {
   private pressTimer = 0;
   private pressAt: Pt = [0, 0];
   private lastPointerType = '';
+  private hintTimer = 0;
 
   constructor(
     el: HTMLElement,
@@ -122,16 +128,24 @@ export class Input {
       this.preview.active = false;
       this.pointerId = -1;
       clearTimeout(this.pressTimer);
+      this.hint(null);
     });
-    el.addEventListener('pointerleave', () => this.setHover(false));
+    el.addEventListener('pointerleave', () => {
+      this.setHover(false);
+      if (!this.preview.active) this.hint(null);
+    });
     el.addEventListener('contextmenu', (e) => {
       e.preventDefault();
       // タッチの長押しでも contextmenu が来る（Android）。そちらは長押しの処理に任せる
       if (this.lastPointerType !== 'touch') this.menu(e);
     });
     // ドラッグ中に Shift を押す／離すだけでもプレビューを切り替える
-    addEventListener('keydown', (e) => e.key === 'Shift' && (this.preview.bumper = true));
-    addEventListener('keyup', (e) => e.key === 'Shift' && (this.preview.bumper = false));
+    const shift = (on: boolean) => {
+      this.preview.bumper = on;
+      if (this.preview.active && this.lastPointerType === 'mouse') this.hint(on ? 'bumper' : 'drag');
+    };
+    addEventListener('keydown', (e) => e.key === 'Shift' && shift(true));
+    addEventListener('keyup', (e) => e.key === 'Shift' && shift(false));
   }
 
   setTool(tool: Tool): void {
@@ -149,7 +163,18 @@ export class Input {
     h.x = x;
     h.y = y;
     clearTimeout(this.hoverTimer);
-    if (active) this.hoverTimer = window.setTimeout(() => (h.active = false), HOVER_IDLE_MS);
+    if (active) {
+      this.hoverTimer = window.setTimeout(() => {
+        h.active = false;
+        // カーソルが隠れるのと一緒に案内も消す（描いている間は残す）
+        if (!this.preview.active) this.hint(null);
+      }, HOVER_IDLE_MS);
+    }
+  }
+
+  private hint(kind: HintKind | null, ms?: number): void {
+    clearTimeout(this.hintTimer);
+    this.onHint?.(kind, ms);
   }
 
   private down(e: PointerEvent): void {
@@ -163,8 +188,16 @@ export class Input {
       this.pressTimer = window.setTimeout(() => {
         // 長押し: 描きかけを捨てて、押した場所の図形のメニューを開く
         this.preview.active = false;
+        this.hint(null);
         if (this.menu(e)) navigator.vibrate?.(15);
       }, LONG_PRESS_MS);
+      // 図形の上なら、押さえ続けるとメニューが開くことを見せる
+      const w = this.toWorld(e.clientX, e.clientY);
+      if (this.pick(w.x, w.y) >= 0) {
+        this.hintTimer = window.setTimeout(() => this.onHint?.('hold', LONG_PRESS_MS - HOLD_HINT_MS), HOLD_HINT_MS);
+      }
+    } else {
+      this.hint(e.shiftKey ? 'bumper' : 'drag');
     }
     const p = this.toWorld(e.clientX, e.clientY);
     this.start = [p.x, p.y];
@@ -177,9 +210,19 @@ export class Input {
 
   private move(e: PointerEvent): void {
     if (this.preview.active && e.pointerId !== this.pointerId) return;
-    if (Math.hypot(e.clientX - this.pressAt[0], e.clientY - this.pressAt[1]) > LONG_PRESS_SLOP) clearTimeout(this.pressTimer);
+    if (e.pointerType === 'touch' && this.preview.active
+      && Math.hypot(e.clientX - this.pressAt[0], e.clientY - this.pressAt[1]) > LONG_PRESS_SLOP) {
+      // 指が動いた = 描いている。長押しと、その輪をやめる
+      clearTimeout(this.pressTimer);
+      this.hint(null);
+    }
     const p = this.toWorld(e.clientX, e.clientY);
     this.setHover(true, p.x, p.y);
+    if (e.pointerType === 'mouse') {
+      if (this.preview.active) this.hint(e.shiftKey ? 'bumper' : 'drag');
+      else if (this.pick(p.x, p.y) >= 0) this.hint('shape');
+      else this.hint(null);
+    }
     if (!this.preview.active) return;
     this.preview.bumper = e.shiftKey;
     this.update(p.x, p.y);
@@ -189,9 +232,10 @@ export class Input {
     if (e.pointerId !== this.pointerId) return;
     clearTimeout(this.pressTimer);
     this.pointerId = -1;
-    if (!this.preview.active || e.button !== 0) return;
+    if (!this.preview.active || e.button !== 0) return this.hint(null);
     this.move(e);
     this.preview.active = false;
+    this.hint(null);
     const { points, closed } = this.shape;
     if (points.length < 2 || this.preview.perimeter < MIN_LINE_LEN) return;
     const segKind = e.shiftKey ? 'bumper' : 'line';
@@ -260,6 +304,7 @@ export class Input {
     const p = this.toWorld(e.clientX, e.clientY);
     const group = this.pick(p.x, p.y);
     if (group < 0) return false;
+    this.hint(null);
     this.onShapeMenu?.(group, e.clientX, e.clientY);
     return true;
   }

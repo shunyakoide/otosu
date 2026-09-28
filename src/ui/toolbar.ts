@@ -157,13 +157,13 @@ export class Toolbar {
     // iPhone の Safari のように全画面にできない環境ではボタンを出さない
     if (document.fullscreenEnabled) btn(ICONS.fullscreen, 'fullscreen (F)', on.fullscreen);
 
-    // 操作の案内: 始めるまでは出さず、始めてからしばらくで消す（showHelp）
+    // 操作の案内: 始めるまでは出さず、始めてからしばらくで消す（showHelp）。右クリックと Shift は、使える場面でカーソルのそばに出す（D53）
     this.help = document.createElement('div');
     this.help.id = 'toolbar-help';
     this.help.className = 'ui gone';
     this.help.innerHTML = matchMedia('(hover: none)').matches
       ? 'drag to draw · long-press a shape: effects / delete'
-      : 'drag to draw · <kbd>shift</kbd> bumper · right-click a shape: effects / delete · <kbd>space</kbd> pause · <kbd>H</kbd> hide ui · <kbd>,</kbd> fine-tune';
+      : 'drag to draw · <kbd>space</kbd> pause · <kbd>H</kbd> hide ui · <kbd>,</kbd> fine-tune';
     // 道具の名前と音色（タッチではホバーの説明が出ないので、選んだときに少しだけ出す）
     this.tip = document.createElement('div');
     this.tip.id = 'toolbar-tip';
