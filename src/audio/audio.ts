@@ -106,16 +106,20 @@ const RETRIGGER_EPS = 1e-4;
  * 鳴り終わった声部があればその中で一番古いもの、なければ一番古く発音を始めた声部を止めて使う。
  * どの声部も at と同時刻（以降）に発音済みなら undefined（その音は捨てる）
  */
-function pickSlot<V extends Slot>(pool: readonly V[], at: number): V | undefined {
-  return freeSlot(pool, at) ?? oldestSlot(pool, at);
+function pickSlot<V extends Slot>(pool: Pool<V>, at: number): V | undefined {
+  return freeSlot(pool, at) ?? oldestSlot(pool.items, at);
 }
 
-function freeSlot<V extends Slot>(pool: readonly V[], at: number): V | undefined {
+/** 空いている声部。なければ上限まで新しく作る */
+function freeSlot<V extends Slot>(pool: Pool<V>, at: number): V | undefined {
   let free: V | undefined;
-  for (const v of pool) {
+  for (const v of pool.items) {
     if (v.endsAt <= at && v.startedAt < at - RETRIGGER_EPS && (!free || v.startedAt < free.startedAt)) free = v;
   }
-  return free;
+  if (free || pool.items.length >= pool.max) return free;
+  const made = pool.make();
+  pool.items.push(made);
+  return made;
 }
 
 function oldestSlot<V extends Slot>(pool: readonly V[], at: number): V | undefined {
@@ -125,6 +129,12 @@ function oldestSlot<V extends Slot>(pool: readonly V[], at: number): V | undefin
   }
   return oldest;
 }
+
+/**
+ * 声部の置き場。声部（シンセとノード一式）は最初にまとめて作らず、足りなくなったときに max まで作る。
+ * 始めた瞬間に数百のノードを作るとモバイルでメモリが跳ねてページが落ちるため（D40）
+ */
+type Pool<V extends Slot> = { readonly items: V[]; readonly max: number; readonly make: () => V };
 
 type PadLayer = { root: Tone.FatOscillator; fifth: Tone.FatOscillator; gain: Tone.Gain };
 
@@ -137,12 +147,12 @@ function clamp(v: number, lo: number, hi: number): number {
 }
 
 export class Audio {
-  private readonly voices: Voice[] = [];
-  private readonly penVoices: Voice[] = [];
-  private readonly kickVoices: KickVoice[] = [];
-  private readonly subVoices: SubVoice[] = [];
-  private readonly chimeVoices: ChimeVoice[] = [];
-  private readonly woodVoices: WoodVoice[] = [];
+  private voices: Pool<Voice> = { items: [], max: 0, make: () => { throw new Error('not started'); } };
+  private penVoices: Pool<Voice> = { items: [], max: 0, make: () => { throw new Error('not started'); } };
+  private kickVoices: Pool<KickVoice> = { items: [], max: 0, make: () => { throw new Error('not started'); } };
+  private subVoices: Pool<SubVoice> = { items: [], max: 0, make: () => { throw new Error('not started'); } };
+  private chimeVoices: Pool<ChimeVoice> = { items: [], max: 0, make: () => { throw new Error('not started'); } };
+  private woodVoices: Pool<WoodVoice> = { items: [], max: 0, make: () => { throw new Error('not started'); } };
   private delay!: Tone.PingPongDelay;
   private brightness!: Tone.Filter;
   private master!: Tone.Gain;
@@ -198,7 +208,7 @@ export class Audio {
 
     // ---- 衝突ボイス ----
     const hitBus = new Tone.Gain(1);
-    for (let i = 0; i < VOICES; i++) {
+    this.voices = { items: [], max: VOICES, make: () => {
       const synth = new Tone.FMSynth({
         harmonicity: 3,
         modulationIndex: 3.5,
@@ -210,8 +220,8 @@ export class Audio {
       });
       const panner = new Tone.Panner(0);
       synth.chain(panner, hitBus);
-      this.voices.push({ synth, panner, startedAt: -Infinity, endsAt: -Infinity });
-    }
+      return { synth, panner, startedAt: -Infinity, endsAt: -Infinity };
+    } };
 
     // ---- 共通のエフェクト ----
     const highpass = new Tone.Filter({ type: 'highpass', frequency: 120, rolloff: -12 });
@@ -227,7 +237,7 @@ export class Audio {
     Tone.getDestination().volume.value = -3;
 
     // ---- pen: カリンバ（短く明るいアタック、サイン波の胴、1〜1.5秒で減衰） ----
-    for (let i = 0; i < PEN_VOICES; i++) {
+    this.penVoices = { items: [], max: PEN_VOICES, make: () => {
       const synth = new Tone.FMSynth({
         harmonicity: PEN_TINE_LOW,
         modulationIndex: 2,
@@ -240,11 +250,11 @@ export class Audio {
       });
       const panner = new Tone.Panner(0);
       synth.chain(panner, hitBus);
-      this.penVoices.push({ synth, panner, startedAt: -Infinity, endsAt: -Infinity });
-    }
+      return { synth, panner, startedAt: -Infinity, endsAt: -Infinity };
+    } };
 
     // ---- triangle: チャイム（非整数比の FM ＋少しずらしたサインでうなり、3〜5秒の余韻） ----
-    for (let i = 0; i < CHIME_VOICES; i++) {
+    this.chimeVoices = { items: [], max: CHIME_VOICES, make: () => {
       const panner = new Tone.Panner(0).connect(hitBus);
       const fm = new Tone.FMSynth({
         harmonicity: CHIME_RATIO,
@@ -261,14 +271,14 @@ export class Audio {
         envelope: { attack: 0.03, decay: 4.4, sustain: 0, release: CHIME_RELEASE },
         volume: CHIME_BASE_DB + CHIME_BEAT_DB,
       }).connect(panner);
-      this.chimeVoices.push({ fm, beat, panner, startedAt: -Infinity, endsAt: -Infinity });
-    }
+      return { fm, beat, panner, startedAt: -Infinity, endsAt: -Infinity };
+    } };
 
     // ---- square: ウッドブロック（短い音程つきの胴＋帯域通過ノイズのクリック。ディレイは通さない） ----
     const percBus = new Tone.Gain(1);
     const percHighpass = new Tone.Filter({ type: 'highpass', frequency: 200, rolloff: -12 });
     percBus.chain(percHighpass, reverb);
-    for (let i = 0; i < WOOD_VOICES; i++) {
+    this.woodVoices = { items: [], max: WOOD_VOICES, make: () => {
       const panner = new Tone.Panner(0).connect(percBus);
       const tone = new Tone.MembraneSynth({
         // octaves は開始周波数の倍率（音高 × octaves から音高へ下がる）。ごく小さな音程の落ち込みで「コッ」
@@ -284,8 +294,8 @@ export class Audio {
         envelope: { attack: 0.001, decay: 0.022, sustain: 0, release: 0.01 },
         volume: WOOD_NOISE_DB,
       }).connect(band);
-      this.woodVoices.push({ tone, noise, band, panner, startedAt: -Infinity, endsAt: -Infinity });
-    }
+      return { tone, noise, band, panner, startedAt: -Infinity, endsAt: -Infinity };
+    } };
 
     // ---- circle: キック〜タム（ローパスで丸く、リバーブは薄く。鼓動であって EDM の押し出しではない） ----
     const kickBus = new Tone.Gain(1);
@@ -294,7 +304,7 @@ export class Audio {
     kickBus.connect(kickLowpass);
     kickLowpass.connect(this.master);
     kickLowpass.chain(kickSend, reverb);
-    for (let i = 0; i < KICK_VOICES; i++) {
+    this.kickVoices = { items: [], max: KICK_VOICES, make: () => {
       const panner = new Tone.Panner(0).connect(kickBus);
       const synth = new Tone.MembraneSynth({
         octaves: 3,
@@ -303,16 +313,16 @@ export class Audio {
         envelope: { attack: 0.004, decay: 0.65, sustain: 0, release: KICK_RELEASE },
         volume: KICK_BASE_DB,
       }).connect(panner);
-      this.kickVoices.push({ synth, panner, startedAt: -Infinity, endsAt: -Infinity });
-    }
-    for (let i = 0; i < SUB_VOICES; i++) {
+      return { synth, panner, startedAt: -Infinity, endsAt: -Infinity };
+    } };
+    this.subVoices = { items: [], max: SUB_VOICES, make: () => {
       const synth = new Tone.Synth({
         oscillator: { type: 'sine' },
         envelope: { attack: 0.012, decay: 1.0, sustain: 0, release: 0.3 },
         volume: SUB_DB,
       }).connect(kickBus);
-      this.subVoices.push({ synth, startedAt: -Infinity, endsAt: -Infinity });
-    }
+      return { synth, startedAt: -Infinity, endsAt: -Infinity };
+    } };
 
     // ---- 確定音（控えめなポロン。ディレイは通さずリバーブだけ） ----
     for (let i = 0; i < 2; i++) {
@@ -418,7 +428,7 @@ export class Audio {
 
   /** 盛り上がっているときはオクターブ上を重ねる（line / pen のみ）。空いている声部があるときだけ（本体の音を奪わない） */
   private doubleOctave(
-    pool: Voice[], e: HitEvent, t: number, at: number,
+    pool: Pool<Voice>, e: HitEvent, t: number, at: number,
     strike: (v: Voice, midi: number, t: number, extraDb: number, decayScale: number) => void,
   ): void {
     if (this.energy <= DOUBLE_FROM || e.midi + 12 > 96) return;

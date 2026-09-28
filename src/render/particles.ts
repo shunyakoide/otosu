@@ -237,6 +237,7 @@ export class Particles implements BackdropLayer {
   };
   private readonly lines: LineSegments;
   private readonly lineScene = new Scene();
+  private readonly size = new Vector2();
   private readonly fadeU = { src: { value: null as Texture | null }, damp: { value: TRAIL_DAMP } };
   private readonly fadeQuad = new FullScreenQuad(new ShaderMaterial({ uniforms: this.fadeU, vertexShader: QUAD_VERT, fragmentShader: FADE_FRAG, blending: NoBlending }));
   private readonly showU = { trail: { value: null as Texture | null }, level: { value: 1 } };
@@ -314,7 +315,7 @@ export class Particles implements BackdropLayer {
     }
 
     // 軌跡のバッファは画面と同じ大きさ（CSS px）
-    const size = renderer.getSize(new Vector2());
+    const size = renderer.getSize(this.size);
     const w = Math.max(1, Math.round(size.x));
     const h = Math.max(1, Math.round(size.y));
     const prevTarget = renderer.getRenderTarget();

@@ -671,8 +671,18 @@ setInterval(() => {
   }
 }, 2000);
 
-// タブを隠すと rAF が止まり note off が送られないので、先に全部止める
+// タブを隠すと rAF が止まり note off が送られないので、先に全部止める。
+// パッドは rAF と関係なく鳴り続けるので、AudioContext ごと止める（一時停止と同じく時刻も止まる）。
+// 戻ったら、自分で一時停止していなければ再開する。iOS は戻ったときに interrupted のままのことがあるので resume し直す（D41）
+function hideAudio(): void {
+  midi.allNotesOff();
+  if (started) void audio.raw.suspend();
+}
 addEventListener('visibilitychange', () => {
-  if (document.hidden) midi.allNotesOff();
+  if (document.hidden) hideAudio();
+  else if (started && !paused) void audio.raw.resume();
 });
-addEventListener('pagehide', () => midi.allNotesOff());
+addEventListener('pagehide', hideAudio);
+addEventListener('pageshow', () => {
+  if (started && !paused && !document.hidden) void audio.raw.resume();
+});
