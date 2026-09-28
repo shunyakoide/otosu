@@ -513,7 +513,7 @@ export class Flowers {
 
   draw(rs: number): void {
     this.mesh.visible = true;
-    this.material.uniforms['uTime']!.value = rs / HZ;
+    this.material.uniforms.uTime!.value = rs / HZ;
     if (this.dirtyFrom >= 0) {
       for (const a of this.all) {
         a.clearUpdateRanges();

@@ -16,22 +16,23 @@
 .pn-info { flex: 1; color: var(--pn-text); }
 .pn-hint { margin: -2px 0 6px; font-size: var(--fs-s); line-height: 1.5; color: var(--ui-faint); }
 .pn-scroll { overflow-y: auto; padding: 6px 16px 12px; scrollbar-width: thin; scrollbar-color: var(--pn-faint) transparent; }
-.pn button { font: inherit; color: inherit; background: none; border: 0; padding: 0; cursor: pointer; }
+/* ボタンの打ち消しは :where で詳細度 0 にして、各部品のクラスが !important なしで勝つようにする */
+:where(.pn) :where(button) { font: inherit; color: inherit; background: none; border: 0; padding: 0; cursor: pointer; }
 
 .pn-section + .pn-section { border-top: 1px solid var(--ui-line); }
 .pn-head {
-  display: flex; align-items: center; width: 100%; padding: 12px 0 8px !important;
-  font-size: var(--fs-s) !important; letter-spacing: 0.22em !important; text-transform: uppercase; color: var(--pn-dim) !important;
+  display: flex; align-items: center; width: 100%; padding: 12px 0 8px;
+  font-size: var(--fs-s); letter-spacing: 0.22em; text-transform: uppercase; color: var(--pn-dim);
 }
 .pn-head::after {
   content: ''; margin-left: auto; width: 5px; height: 5px;
   border-right: 1px solid currentColor; border-bottom: 1px solid currentColor; transform: rotate(45deg) translateY(-2px);
   transition: transform 0.2s;
 }
-.pn-head:hover { color: var(--pn-text) !important; }
+.pn-head:hover { color: var(--pn-text); }
 .pn-section.closed .pn-head::after { transform: rotate(-45deg); }
-.pn-section.closed .pn-body { display: none; }
 .pn-body { padding-bottom: 8px; }
+.pn-section.closed .pn-body { display: none; }
 /* 小窓の中の小見出し（畳まない） */
 .pn-sub {
   padding: 10px 0 4px; font-size: var(--fs-s); letter-spacing: 0.22em; text-transform: uppercase; color: var(--ui-faint);
@@ -63,19 +64,19 @@
 .pn-range:focus { outline: none; }
 
 /* スイッチ */
-.pn-switch { position: relative; width: 24px; height: 12px; border-radius: 6px; box-shadow: inset 0 0 0 1px var(--pn-dim) !important; }
+.pn-switch { position: relative; width: 24px; height: 12px; border-radius: 6px; box-shadow: inset 0 0 0 1px var(--pn-dim); }
 .pn-switch::after {
   content: ''; position: absolute; top: 3px; left: 3px; width: 6px; height: 6px; border-radius: 50%;
   background: var(--pn-dim); transition: left 0.15s, background 0.15s;
 }
-.pn-switch.on { box-shadow: inset 0 0 0 1px var(--pn-accent) !important; }
+.pn-switch.on { box-shadow: inset 0 0 0 1px var(--pn-accent); }
 .pn-switch.on::after { left: 15px; background: var(--pn-accent); }
 
 /* 並べた選択肢: 選んでいるものだけ白く、下に小さな点 */
 .pn-choices { display: flex; flex-wrap: wrap; gap: 2px 11px; flex: 1; }
-.pn-choice { position: relative; padding: 3px 0 !important; color: var(--pn-dim) !important; font-variant-numeric: tabular-nums; }
-.pn-choice:hover { color: var(--pn-text) !important; }
-.pn-choice.on { color: var(--pn-accent) !important; }
+.pn-choice { position: relative; padding: 3px 0; color: var(--pn-dim); font-variant-numeric: tabular-nums; }
+.pn-choice:hover { color: var(--pn-text); }
+.pn-choice.on { color: var(--pn-accent); }
 .pn-choice.on::after {
   content: ''; position: absolute; left: 50%; bottom: -1px; width: 3px; height: 3px; margin-left: -1.5px;
   border-radius: 50%; background: currentColor;
@@ -91,11 +92,11 @@
 
 /* 文字だけのボタン */
 .pn-actions { display: flex; flex-wrap: wrap; gap: 4px 14px; padding: 6px 0 2px; }
-.pn-action { padding: 3px 0 !important; color: var(--pn-dim) !important; }
-.pn-action:hover { color: var(--pn-accent) !important; }
-.pn-action.strong { color: var(--pn-text) !important; }
+.pn-action { padding: 3px 0; color: var(--pn-dim); }
+.pn-action:hover { color: var(--pn-accent); }
+.pn-action.strong { color: var(--pn-text); }
 /* 録音中: 白く点滅させる（赤は使わない。D37） */
-.pn-action.rec { color: var(--pn-accent) !important; animation: pn-blink 1.2s ease-in-out infinite; }
+.pn-action.rec { color: var(--pn-accent); animation: pn-blink 1.2s ease-in-out infinite; }
 @keyframes pn-blink { 50% { opacity: 0.35; } }
 
 /* 保存した配置の一覧 */
@@ -106,9 +107,9 @@
 .pn-item.on .pn-load { color: var(--pn-accent); }
 .pn-item.on .pn-load::before { content: '•'; margin-right: 6px; }
 .pn-item time { color: var(--pn-dim); font-size: var(--fs-s); font-variant-numeric: tabular-nums; }
-.pn-item .pn-del { width: 16px; color: var(--pn-dim) !important; opacity: 0; transition: opacity 0.15s; }
+.pn-item .pn-del { width: 16px; color: var(--pn-dim); opacity: 0; transition: opacity 0.15s; }
 .pn-item:hover .pn-del { opacity: 1; }
-.pn-item .pn-del:hover { color: var(--pn-accent) !important; }
+.pn-item .pn-del:hover { color: var(--pn-accent); }
 @media (hover: none) { .pn-item .pn-del { opacity: 1; width: 32px; min-height: 32px; } }
 .pn-empty { color: var(--ui-faint); padding: 4px 0; }
 
@@ -125,13 +126,13 @@
 /* 図形のメニュー（D32）: 長押し・右クリックした場所のそばに開く。指で押しやすい高さにする */
 .pn.shape-menu { top: 0; z-index: 20; min-width: 190px; padding: 6px 0; }
 .sm-item {
-  display: flex; align-items: center; gap: 12px; width: 100%; min-height: 40px; padding: 0 18px !important;
-  text-align: left; color: var(--pn-dim) !important; font-size: var(--fs-l) !important;
+  display: flex; align-items: center; gap: 12px; width: 100%; min-height: 40px; padding: 0 18px;
+  text-align: left; color: var(--pn-dim); font-size: var(--fs-l);
 }
-.sm-item:hover { color: var(--pn-text) !important; }
-.sm-item.on { color: var(--pn-accent) !important; }
+.sm-item:hover { color: var(--pn-text); }
+.sm-item.on { color: var(--pn-accent); }
 .sm-item.on .sm-label::after { content: ' ✓'; }
 .sm-hint { margin-left: auto; font-size: var(--fs-s); color: var(--ui-faint); }
 /* 消す: 線で区切るだけ。色は付けない（D37） */
-.sm-delete { border-top: 1px solid var(--ui-line) !important; margin-top: 4px !important; }
-.sm-delete:hover { color: var(--pn-accent) !important; }
+.sm-delete { border-top: 1px solid var(--ui-line); margin-top: 4px; }
+.sm-delete:hover { color: var(--pn-accent); }

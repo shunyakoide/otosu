@@ -1,5 +1,6 @@
 import { Color, RingGeometry } from 'three';
 import { HZ } from '../sim/constants';
+import { easeOutCubic } from './ease';
 import { commit, instanced, putDisc } from './instancing';
 import { noteColor, type ColorMode } from './palette';
 
@@ -12,8 +13,6 @@ const MAX_RIPPLES = 64;
  * sides = 3 / 4 なら図形と同じ三角・四角の輪郭で、angle（頂点の向き、画面の y 下向きのまま）から spin だけ回りながら広がる
  */
 export type Ripple = { x: number; y: number; step: number; note: number; r0: number; grow: number; dur: number; gain: number; sides?: 3 | 4; angle?: number; spin?: number };
-
-const easeOutCubic = (p: number) => 1 - Math.pow(1 - p, 3);
 
 export class Ripples {
   readonly circles = instanced(new RingGeometry(0.93, 1, 48), MAX_RIPPLES, 1);

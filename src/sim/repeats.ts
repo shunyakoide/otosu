@@ -65,7 +65,7 @@ export class Repeats {
       const section = this.time.sectionAt(s);
       out.push({
         ...r.ev, step: s, echo: r.k, note, section, midi: formMidi(r.ev.form, note, section, song),
-        velocity: r.ev.velocity * Math.pow(rise ? RISE_DECAY : ECHO_DECAY, r.k),
+        velocity: r.ev.velocity * (rise ? RISE_DECAY : ECHO_DECAY) ** r.k,
       });
       r.k++;
       if (r.k > (rise ? RISE_COUNT : ECHO_COUNT)) this.items.delete(group);

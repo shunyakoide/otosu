@@ -65,10 +65,11 @@ export function normalizePoints(
   }
   const out: [number, number][] = [];
   for (const q of points) {
-    const p = [q[0] + dx, q[1] + dy];
+    const px = q[0] + dx;
+    const py = q[1] + dy;
     // 画面内にクランプ（保存形式と同じ扱いにして、読み込み後も同じ形になるように）
-    const x = Math.min(b.maxX, Math.max(b.minX, Math.round(p[0])));
-    const y = Math.min(b.maxY, Math.max(0, Math.round(p[1])));
+    const x = Math.min(b.maxX, Math.max(b.minX, Math.round(px)));
+    const y = Math.min(b.maxY, Math.max(0, Math.round(py)));
     if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
     const last = out[out.length - 1];
     if (last && last[0] === x && last[1] === y) continue;

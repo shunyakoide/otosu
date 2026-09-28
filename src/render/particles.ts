@@ -316,7 +316,7 @@ export class Particles implements BackdropLayer {
 
       // 軌跡を薄くして、動いた分の線を描き足す
       this.fadeU.src.value = this.trailA.texture;
-      this.fadeU.damp.value = Math.pow(TRAIL_DAMP, dt * 60);
+      this.fadeU.damp.value = TRAIL_DAMP ** (dt * 60);
       renderer.setRenderTarget(this.trailB);
       this.fadeQuad.render(renderer);
       this.lineU.prevState.value = this.simB.texture;

@@ -105,7 +105,7 @@ export class FlowPass extends Pass {
     const u = this.u;
     u.time.value += dt;
     u.res.value.set(w, h);
-    u.damp.value = Math.pow(o.drip ? Math.max(o.damp, DRIP_DAMP) : o.damp, dt * 60);
+    u.damp.value = (o.drip ? Math.max(o.damp, DRIP_DAMP) : o.damp) ** (dt * 60);
     u.gate.value = o.drip ? 1 : 0;
     u.shift.value = o.drip ? (o.dripSpeed * dt) / h : 0;
     u.streak.value = o.drip ? DRIP_STREAK : 0;

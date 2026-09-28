@@ -37,7 +37,7 @@ export function lengthToNote(lengthPx: number): Note {
 }
 
 export function midiToFreq(midi: number): number {
-  return 440 * Math.pow(2, (midi - 69) / 12);
+  return 440 * 2 ** ((midi - 69) / 12);
 }
 
 // ---- ハーモニーの移ろい（step2-audio.md 案1 / D9） ----
@@ -78,7 +78,7 @@ export const SONG_IDS = Object.keys(SONGS) as SongId[];
 export const DEFAULT_SONG: SongId = 'bright';
 
 export function isSongId(v: unknown): v is SongId {
-  return typeof v === 'string' && Object.prototype.hasOwnProperty.call(SONGS, v);
+  return typeof v === 'string' && Object.hasOwn(SONGS, v);
 }
 
 /** 進行 I–IV–I–V（bright）。区間の数はどの曲も同じ */

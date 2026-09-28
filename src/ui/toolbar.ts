@@ -104,7 +104,9 @@ export class Toolbar {
 
     this.playBtn = btn(ICONS.pause, 'pause (space)', on.play);
     sep();
-    tools.forEach((t, i) => this.tools.set(t, btn(ICONS[t], `${TOOL_LABELS[t]} (${i + 1})`, () => on.tool(t))));
+    tools.forEach((t, i) => {
+      this.tools.set(t, btn(ICONS[t], `${TOOL_LABELS[t]} (${i + 1})`, () => on.tool(t)));
+    });
     sep();
 
     // テンポ: − 90 +（ホイールでも変えられる）

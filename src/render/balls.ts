@@ -140,7 +140,7 @@ export class Balls {
           const km = (q - 0.5) * TRAIL_STRIDE; // クアッド中点の「何ステップ前か」
           const f = Math.min(1, km / steps);
           // 尾のクアッドはボールや隣と重なって加算されるので、上限を設けてブルームの大きな滲みを防ぐ
-          const intensity = Math.min(this.intensity(look, s0 - km) * gain, cap) * Math.pow(1 - f, 1.5);
+          const intensity = Math.min(this.intensity(look, s0 - km) * gain, cap) * (1 - f) ** 1.5;
           const width = 2 * BALL_RADIUS * thick * (0.8 - 0.6 * f);
           c.copy(base).multiplyScalar(intensity);
           putQuad(mesh, n++, px, py, qx, qy, width, c);

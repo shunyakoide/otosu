@@ -654,7 +654,9 @@ describe('emission timing (D10)', () => {
       sim.advance();
       for (const e of sim.drainEvents()) if (e.kind === 'emit') emits.push(e.step);
     }
-    emits.forEach((step, k) => expect(Math.abs(step - (k * 2 * 7200) / 97)).toBeLessThanOrEqual(0.5));
+    emits.forEach((step, k) => {
+      expect(Math.abs(step - (k * 2 * 7200) / 97)).toBeLessThanOrEqual(0.5);
+    });
   });
 });
 

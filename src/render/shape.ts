@@ -120,8 +120,8 @@ export function contour(s: Shape, phi: number, d: number, lift: number): Float32
   }
   if (ox !== 0 || oy !== 0) {
     for (let i = 0; i < s.n; i++) {
-      v[i * 2] += ox;
-      v[i * 2 + 1] += oy;
+      v[i * 2]! += ox;
+      v[i * 2 + 1]! += oy;
     }
   }
   return v;

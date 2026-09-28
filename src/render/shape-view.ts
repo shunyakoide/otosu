@@ -2,6 +2,7 @@ import { Color } from 'three';
 import { HZ, LINE_WIDTH, MIN_LINE_LEN, WORLD_W } from '../sim/constants';
 import { lengthToNote } from '../sim/music';
 import type { ShapeAddedEvent } from '../sim/types';
+import { easeOutCubic } from './ease';
 import type { Glints } from './glints';
 import { FX_WAVE_SEC, Outline } from './outline';
 import { GRAY, noteColor, OFF_WHITE, type ColorMode } from './palette';
@@ -79,7 +80,6 @@ const METAL_RING_GAIN = 0.35;
 /** 広がるあいだに回る角度（rad） */
 const METAL_RING_SPIN = 0.35;
 
-const easeOutCubic = (p: number) => 1 - Math.pow(1 - p, 3);
 /** 弦の余韻の時定数: 低音（note 0）ほど長い 1.5s → 高音（note 15）0.4s */
 const stringTau = (note: number) => 1.5 - (1.1 * Math.min(15, Math.max(0, note))) / 15;
 /** 円の大きさ 0..1 */

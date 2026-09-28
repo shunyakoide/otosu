@@ -1,6 +1,7 @@
 import { CircleGeometry, Color, DynamicDrawUsage, InstancedBufferAttribute, PlaneGeometry, type MeshBasicMaterial } from 'three';
 import { HZ, LINE_WIDTH } from '../sim/constants';
 import { riseSlot } from '../sim/music';
+import { easeOutCubic } from './ease';
 import { additive, commit, instanced, putDisc, putQuad } from './instancing';
 import { noteColor, type ColorMode } from './palette';
 import { contour, type Shape } from './shape';
@@ -37,8 +38,6 @@ const FX_WIDTH = 1.5;
 const FX_WAVE_REACH = 44;
 export const FX_WAVE_SEC = 0.9;
 const FX_WAVE_GAIN = 0.9;
-
-const easeOutCubic = (p: number) => 1 - Math.pow(1 - p, 3);
 
 /**
  * 辺のマテリアル（弦が鳴る）。インスタンスごとに

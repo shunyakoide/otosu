@@ -272,7 +272,7 @@ export class Audio {
   }
 
   private brightnessHz(e: number): number {
-    return 4000 * Math.pow(2, 2 * e); // 4k … 16k Hz
+    return 4000 * 2 ** (2 * e); // 4k … 16k Hz
   }
 
   private delayWet(e: number): number {

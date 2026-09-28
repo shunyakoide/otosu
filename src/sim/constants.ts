@@ -90,7 +90,7 @@ export const DRIFT_AMP_DEFAULT = 24;
 /** 衝突速度 → 0..1（音量と発光強度の共通値） */
 export function impactVelocity(vn: number): number {
   const x = Math.min(1, Math.max(0, (vn - V_MIN) / (V_REF - V_MIN)));
-  return 0.12 + 0.88 * Math.pow(x, 0.6);
+  return 0.12 + 0.88 * x ** 0.6;
 }
 
 /** 回転速度の上限。長い線ほど遅く回す（1ステップの掃引が当たり判定半径を超えないように） */

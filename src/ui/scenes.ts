@@ -119,7 +119,7 @@ export class ScenesPopover extends Popover {
     }
     this.list.replaceChildren(...names.map((name) => {
       const item = document.createElement('div');
-      item.className = 'pn-item' + (name === this.current ? ' on' : '');
+      item.className = `pn-item${name === this.current ? ' on' : ''}`;
       item.dataset.name = name;
       const when = document.createElement('time');
       when.textContent = shortDate(this.library[name]!.savedAt);

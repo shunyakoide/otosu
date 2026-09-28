@@ -228,7 +228,10 @@ export class Input {
     if (e.pointerId !== this.pointerId) return;
     clearTimeout(this.pressTimer);
     this.pointerId = -1;
-    if (!this.preview.active || e.button !== 0) return this.hint(null);
+    if (!this.preview.active || e.button !== 0) {
+      this.hint(null);
+      return;
+    }
     this.move(e);
     this.preview.active = false;
     this.hint(null);

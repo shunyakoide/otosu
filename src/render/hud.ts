@@ -110,7 +110,7 @@ export class Hud {
       const live = age >= 0 && age < HUD_SEC;
       // 出るときに数回点滅して、あとはゆっくり消える
       const blink = age < 0.18 ? (Math.floor(age * 30) % 2 === 0 ? 1 : 0.25) : 1;
-      const a = live ? blink * Math.pow(1 - age / HUD_SEC, 1.5) * 0.7 : 0;
+      const a = live ? blink * (1 - age / HUD_SEC) ** 1.5 * 0.7 : 0;
       it.mesh.visible = a > 0.001;
       const m = it.mesh.material as MeshBasicMaterial;
       m.opacity = a;

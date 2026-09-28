@@ -1,6 +1,8 @@
 {
   "compilerOptions": {
     "target": "es2023",
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
     "module": "esnext",
     "lib": ["ES2023", "DOM"],
     "types": ["vite/client"],
@@ -20,5 +22,5 @@
     "erasableSyntaxOnly": true,
     "noFallthroughCasesInSwitch": true
   },
-  "include": ["src"]
+  "include": ["src", "test"]
 }
