@@ -7,6 +7,7 @@ import { Fibers } from './fibers';
 import { Grain } from './grain';
 import { Particles } from './particles';
 import { Slices } from './slices';
+import { Volume } from './volume';
 
 // 背景（D33）。種類を切り替えられる。どれも音（当たった点）に反応する。
 //   caustics  = 光線の格子を曲げた光の膜
@@ -16,10 +17,11 @@ import { Slices } from './slices';
 //   ascii     = 升目に並んだ文字の濃さで濃淡を見せ、当たると輪の上の文字が入れ替わる（D39）
 //   fibers    = 立方体の中の curl noise の流線を細い筒で描く（D42）
 //   slices    = 重ねた板に、手前ほど新しい雲を映す時間のスライス（D42）
+//   volume    = 線だけの立方体の中に、ノイズの塊の膜を点の集まりで描く（D43）
 // 切り替えるときは、いったん暗くしてから次へ。時刻は renderStep から取るので、止めると背景も止まる。
 // 種類ごとの中身（頂点・描き込み先）は選んだときに作り、外したら捨てる（使わない背景でメモリを取らない。D40）。
 
-export const BACKDROPS = ['none', 'caustics', 'particles', 'grain', 'bitmap', 'ascii', 'fibers', 'slices'] as const;
+export const BACKDROPS = ['none', 'caustics', 'particles', 'grain', 'bitmap', 'ascii', 'fibers', 'slices', 'volume'] as const;
 export type BackdropKind = (typeof BACKDROPS)[number];
 
 /** 切り替えのフェード（秒） */
@@ -59,6 +61,7 @@ const MAKE: Record<Exclude<BackdropKind, 'none'>, () => BackdropLayer> = {
   ascii: () => new Ascii(),
   fibers: () => new Fibers(),
   slices: () => new Slices(),
+  volume: () => new Volume(),
 };
 
 export class Backdrop {
