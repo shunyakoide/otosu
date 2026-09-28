@@ -1,11 +1,13 @@
 # otosu
 
-落として、当たって、光って、鳴る。
+English | [日本語](README.ja.md)
 
-落ちてくるボールが線や図形に当たって音を鳴らす、生成音楽のビジュアル作品です。
-楽器が弾けなくても感覚的に音楽を作れて、プロジェクターで投影したときに映えることを目指しています。
+Drop, hit, glow, sound.
 
-## 開発
+otosu is a generative music piece for the eye and ear: falling balls strike the lines and shapes you draw, and every hit becomes a note and a flash of light.
+It aims to let anyone make music by feel, without playing an instrument, and to look good projected on a wall.
+
+## Development
 
 ```bash
 npm install
@@ -13,56 +15,89 @@ npm run dev
 ```
 
 ```bash
-npm test   # 物理の決定論性・すり抜けなしのテスト
+npm test       # physics determinism, no tunneling, MIDI export, and more
+npm run lint   # Biome
+npm run build  # type check and production build (dist/)
 ```
 
-## 操作
+Built with Vite, TypeScript, three.js and Tone.js. The physics (balls against line segments) is hand-written and deterministic: the same layout always plays the same music.
 
-| 操作 | 内容 |
+## Controls
+
+| Input | Action |
 |---|---|
-| ドラッグ | 線や図形を描く（大きいほど低い音。描いている途中も音程が小さく鳴る） |
-| 1〜5 | 道具: 線 / ペン（手描き） / 円 / 三角 / 四角。図形はドラッグの始点が中心、距離が大きさ |
-| Shift + ドラッグ | バンパー（強く跳ね返す）を描く |
-| Space | 再生／停止 |
-| 右クリック（タッチは長押し） | 図形のメニュー: エフェクト echo / rise / chord を付ける（付いているものを選ぶと外す）、図形を消す |
-| M | ミュート（内蔵音と MIDI 出力） |
-| C | 線を全部消す |
-| F | フルスクリーン |
-| H | UI とヒントを隠す（投影用） |
-| S | 今の配置を URL にしてコピー（開くと同じ曲が再現される） |
-| R | .mid の録音を開始／停止（停止するとファイルを保存） |
+| Drag | Draw a line or shape (bigger means lower; the pitch plays softly while you draw) |
+| 1–5 | Tools: line / pen (freehand) / circle / triangle / square. For shapes, the drag starts at the center and its length sets the size |
+| Shift + drag | Draw a bumper (bounces balls hard) |
+| Right-click (long-press on touch) | Shape menu: toggle the echo / rise / chord effects, or delete the shape |
+| Space | Play / pause (pausing stops new balls and lets the rest fade out) |
+| M | Mute (built-in sound and MIDI output) |
+| C | Clear all shapes |
+| S | Copy the current layout as a URL (opening it plays the same music) |
+| R | Start / stop recording a .mid file (saved when you stop) |
+| F | Fullscreen |
+| H | Hide the UI (for projection) |
+| , | Open settings |
+| Esc | Close the open popover |
 
-右上の `otosu` パネルで BPM、放出口の周期比、ステレオの広がり、回転、放出口の揺らぎ（drift）、尾の描き方、発光、音と光のずれ（`visualOffsetMs`）を調整できます。
+The toolbar at the top of the screen has:
 
-図形の形で楽器が変わります。
+- play / pause
+- the tools
+- tempo (scroll to change)
+- volume and mute
+- clear all
+- popovers: motion / light / sound / settings / scenes
 
-| 形 | 音 |
+| Popover | Contents |
 |---|---|
-| 線 | ベル（旋律） |
-| ペン | はじく音（カリンバ風） |
-| 円 | 柔らかいキック〜タム。和音の根音に合わせ、大きい円ほど低い |
-| 三角 | 金属（チャイム／シンギングボウル風）、余韻が長い |
-| 四角 | 木のクリック（ウッドブロック風） |
+| motion | Shape rotation (spin) and emitter movement (sway) |
+| light | Glow, trail style, effects on hit (drip / flowers / readout), and the backdrop |
+| sound | Rhythm (emitter periods), song (chord progression), and a soft chord that keeps playing underneath (hum) |
+| settings | Stereo width, sound-to-light offset (light delay), resolution, MIDI, and the list of keys |
+| scenes | Save and load layouts |
 
-配置はブラウザに自動保存され、リロードしても戻ります。ハーモニーは8小節ごとに C → F → C → G と移ろいます（線の色は変わらず、音高だけが動きます）。
+Each shape plays a different instrument.
 
-## MIDI 出力（GarageBand / DAW と連携）
+| Shape | Sound |
+|---|---|
+| Line | Bell (melody) |
+| Pen | Plucked tone (kalimba-like) |
+| Circle | Soft kick to tom, tuned to the chord root; bigger circles are lower |
+| Triangle | Metal (chime / singing bowl), long decay |
+| Square | Wooden click (woodblock-like) |
 
-### 録音して読み込む（いちばん簡単）
-1. R キー（またはパネルの `MIDI` → `record .mid`）で録音を始める。次の拍の頭から記録される
-2. もう一度 R で止めると `otosu-日付-時刻.mid` が保存される
-3. GarageBand にドラッグ＆ドロップすると、ソフトウェア音源のトラックとして読み込まれる
+The harmony shifts every 8 bars. Pick a song in the sound popover:
+- bright: C–F–C–G
+- dusk: minor key
+- wistful: F–G–Em–Am
+- still: the chord never changes
 
-### ライブで送る（Mac の IAC Driver 経由、Chrome が必要）
-1. 「Audio MIDI 設定」アプリ → メニューの「ウインドウ」→「MIDI スタジオを表示」
-2. 「IAC ドライバ」をダブルクリックし、「装置はオンライン」にチェックを入れる
-3. otosu のパネル `MIDI` → `connect MIDI` を押し、ブラウザの許可ダイアログで許可する（IAC があれば自動で選ばれる）
-4. GarageBand でソフトウェア音源のトラックを作ると、otosu の音で鳴る（GarageBand はすべての MIDI 入力を受け取る）
-5. 円（キック・タム）と四角（ウッドブロック）は GM ドラムとして `drum channel`（既定 10）に送る。録音した .mid でも同じ
-6. 内蔵音と二重に鳴るのが気になる場合は `internal sound` をオフにする。DAW 側の遅れは `offset (ms)` で合わせる
+Line colors stay the same; only the pitches move. Your layout and settings are saved in the browser automatically and come back after a reload.
 
-## ドキュメント
+## MIDI output (GarageBand / DAWs)
 
-- [docs/concept.md](docs/concept.md) — コンセプトと決定事項
-- [docs/design/decisions.md](docs/design/decisions.md) — チームの設計案を統合した裁定（ここが最優先）
-- [docs/design/](docs/design/) — 担当ごとの設計案（音・映像・物理とアーキテクチャ）
+### Record and import (easiest)
+1. Press R (or `record .mid` under `MIDI` in settings) to start recording. Recording begins on the next beat
+2. Press R again to stop; `otosu-<date>-<time>.mid` is saved
+3. Drag and drop it into GarageBand to import it as a software instrument track
+
+### Send live (via the IAC Driver on macOS; requires Chrome)
+1. Open the Audio MIDI Setup app → Window → Show MIDI Studio
+2. Double-click "IAC Driver" and check "Device is online"
+3. In settings, press `connect` under `MIDI` and allow access in the browser prompt (IAC is selected automatically if present)
+4. Create a software instrument track in GarageBand and it will play otosu's notes (GarageBand listens to every MIDI input)
+5. Circles (kick / tom) and squares (woodblock) are sent as GM drums on the `drums` channel (10 by default). Recorded .mid files do the same
+6. If the built-in sound doubles up with your DAW, turn off `built-in`. Use `offset` to compensate for DAW latency
+
+## Documentation
+
+The design history is written in Japanese.
+
+- [docs/concept.md](docs/concept.md) — concept, initial decisions, roadmap
+- [docs/design/decisions.md](docs/design/decisions.md) — log of design decisions (D1 onward). It takes precedence when documents disagree
+- [docs/design/](docs/design/) — early design proposals (steps 1 and 2), split into audio, visuals, and physics/architecture
+
+## License
+
+[MIT](LICENSE)
