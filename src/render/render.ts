@@ -146,6 +146,18 @@ const WOOD_TAU = 0.15;
 const WOOD_ECHO_SEC = 0.12;
 const WOOD_ECHO_GROW = 0.06;
 const WOOD_RIPPLE_SEC = 0.18;
+// 図形の形の輪（円の KICK_RING と同じく、重心から図形と同じ形の輪郭が広がる）
+// square: 短く速く弾け出る。triangle: ゆっくり広がりながら少し回り、長く残る
+const WOOD_RING_GROW = 14;
+const WOOD_RING_GROW_K = 0.35;
+const WOOD_RING_SEC = 0.35;
+const WOOD_RING_GAIN = 0.6;
+const METAL_RING_GROW = 24;
+const METAL_RING_GROW_K = 0.7;
+const METAL_RING_SEC = 1.6;
+const METAL_RING_GAIN = 0.35;
+/** 広がるあいだに回る角度（rad） */
+const METAL_RING_SPIN = 0.35;
 
 // 蔦と花（D25）: 衝突した点から図形に沿って蔦が伸び、通ったところに花が順に咲く
 const MAX_VINES = 96;
@@ -222,8 +234,11 @@ type Vine = {
 };
 
 type BallLook = { note: number; step: number; v: number; chain: number };
-/** 波紋: 半径 r0 から grow だけ dur 秒で広がる。明るさ gain·(1−p)² */
-type Ripple = { x: number; y: number; step: number; note: number; r0: number; grow: number; dur: number; gain: number };
+/**
+ * 波紋: 半径 r0 から grow だけ dur 秒で広がる。明るさ gain·(1−p)²。
+ * sides = 3 / 4 なら図形と同じ三角・四角の輪郭で、angle（頂点の向き、画面の y 下向きのまま）から spin だけ回りながら広がる
+ */
+type Ripple = { x: number; y: number; step: number; note: number; r0: number; grow: number; dur: number; gain: number; sides?: 3 | 4; angle?: number; spin?: number };
 type Hit = { step: number; v: number; s: number; tau: number };
 type Shape = {
   group: number;
@@ -370,6 +385,9 @@ export class Renderer {
   private readonly aB = new InstancedBufferAttribute(new Float32Array(MAX_EDGE_INST * 4), 4);
   private readonly caps = instanced(new CircleGeometry(1, 16), MAX_CAPS, 2);
   private readonly ripples = instanced(new RingGeometry(0.93, 1, 48), MAX_RIPPLES, 1);
+  // 三角・四角の輪。辺の太さが円の輪（半径の 7%）と同じになるよう、内側の半径を cos(π/n) で割って決める
+  private readonly ripples3 = instanced(new RingGeometry(1 - 0.07 / Math.cos(Math.PI / 3), 1, 3), MAX_RIPPLES, 1);
+  private readonly ripples4 = instanced(new RingGeometry(1 - 0.07 / Math.cos(Math.PI / 4), 1, 4), MAX_RIPPLES, 1);
   private readonly emitterMesh = instanced(new RingGeometry(0.6, 1, 32), MAX_EMITTERS, 1);
   private readonly glints = instanced(new CircleGeometry(1, 8), MAX_GLINTS, 3);
   private readonly flowers = new Flowers(1);
@@ -461,7 +479,7 @@ export class Renderer {
     this.composer.addPass(this.bloom);
     this.composer.addPass(new OutputPass());
 
-    this.scene.add(this.backdrop.object, this.hud.object, this.vineQuads, this.flowers.mesh, this.ripples, this.emitterMesh, this.trails, this.edges, this.caps, this.glints, this.balls);
+    this.scene.add(this.backdrop.object, this.hud.object, this.vineQuads, this.flowers.mesh, this.ripples, this.ripples3, this.ripples4, this.emitterMesh, this.trails, this.edges, this.caps, this.glints, this.balls);
     this.resize();
     addEventListener('resize', () => this.resize());
   }
@@ -629,13 +647,33 @@ export class Renderer {
       case 'triangle':
         s.hit = { step, v, s: arc, tau: METAL_TAU };
         this.spawnGlints(s, step, v, arc);
+        // 重心から三角の輪郭がゆっくり回りながら広がる（回る向きは図形の回る向き、止まっていれば交互）
+        this.pushRipple({
+          x: s.gx, y: s.gy, step, note: s.note, r0: s.radius,
+          grow: METAL_RING_GROW + METAL_RING_GROW_K * s.radius,
+          dur: METAL_RING_SEC, gain: METAL_RING_GAIN * (0.4 + v),
+          sides: 3, angle: this.vertexAngle(s, step),
+          spin: METAL_RING_SPIN * (s.omega !== 0 ? Math.sign(s.omega) : step % 2 ? 1 : -1),
+        });
         break;
       case 'square':
         s.hit = { step, v, s: arc, tau: WOOD_TAU };
+        // 重心から四角の輪郭が短く弾け出る
+        this.pushRipple({
+          x: s.gx, y: s.gy, step, note: s.note, r0: s.radius,
+          grow: WOOD_RING_GROW + WOOD_RING_GROW_K * s.radius,
+          dur: WOOD_RING_SEC, gain: WOOD_RING_GAIN * (0.4 + v),
+          sides: 4, angle: this.vertexAngle(s, step),
+        });
         break;
       default:
         s.hit = { step, v, s: arc, tau: stringTau(s.note) };
     }
+  }
+
+  /** 最初の頂点の向き（画面の y 下向きのまま） */
+  private vertexAngle(s: Shape, step: number): number {
+    return Math.atan2(s.rel[1] ?? 0, s.rel[0] ?? 1) + shapeAngle(s, step);
   }
 
   private pushRipple(r: Ripple): void {
@@ -1618,20 +1656,26 @@ export class Renderer {
   private drawRipples(rs: number): void {
     const d = this.dummy;
     const c = this.color;
-    let n = 0;
+    const cnt = [0, 0, 0];
     for (const r of this.rippleBuf) {
       const p = (rs - r.step) / HZ / r.dur;
       if (p < 0 || p >= 1) continue;
-      const radius = r.r0 + r.grow * easeOutCubic(p);
+      const e = easeOutCubic(p);
+      const radius = r.r0 + r.grow * e;
+      const k = r.sides === 3 ? 1 : r.sides === 4 ? 2 : 0;
+      const mesh = k === 1 ? this.ripples3 : k === 2 ? this.ripples4 : this.ripples;
       d.position.set(r.x, -r.y, 0);
-      d.rotation.set(0, 0, 0);
+      // 描く座標は y が上向きなので、向きは逆にする
+      d.rotation.set(0, 0, -((r.angle ?? 0) + (r.spin ?? 0) * e));
       d.scale.set(radius, radius, 1);
       d.updateMatrix();
-      this.ripples.setMatrixAt(n, d.matrix);
-      this.ripples.setColorAt(n, c.copy(noteColor(r.note, this.params.colorMode)).multiplyScalar(r.gain * (1 - p) ** 2));
-      n++;
+      mesh.setMatrixAt(cnt[k]!, d.matrix);
+      mesh.setColorAt(cnt[k]!, c.copy(noteColor(r.note, this.params.colorMode)).multiplyScalar(r.gain * (1 - p) ** 2));
+      cnt[k]!++;
     }
-    commit(this.ripples, n);
+    commit(this.ripples, cnt[0]!);
+    commit(this.ripples3, cnt[1]!);
+    commit(this.ripples4, cnt[2]!);
   }
 
   /** triangle のきらめき: 辺の上の小さな点が瞬きながら長く残る */
