@@ -11,7 +11,9 @@ import { closestOnSegment } from '../sim/collide';
 import { BALL_RADIUS, HZ, LINE_WIDTH, MAX_BALLS, MIN_LINE_LEN, WORLD_H, WORLD_W, type Bounds } from '../sim/constants';
 import { chordSlots, lengthToNote, riseSlot } from '../sim/music';
 import type { SegKind, ShapeAddedEvent, ShapeEffect, ShapeForm, SimEvent, Snapshot } from '../sim/types';
+import { Backdrop, type BackdropKind } from './backdrop';
 import { FLOWER_HOLD_SEC, Flowers } from './flowers';
+import { Hud } from './hud';
 import { FlowPass } from './flow';
 import { GRAY, noteColor, OFF_WHITE, type ColorMode } from './palette';
 import { QualityGovernor, type QualityLevel } from './quality';
@@ -34,6 +36,11 @@ export type RenderParams = {
   trail?: TrailMode;
   /** 衝突で花が咲く（D25） */
   flowers?: boolean;
+  /** 背景（D33, D34）の種類と明るさ */
+  backdrop?: BackdropKind;
+  backdropLevel?: number;
+  /** 当たった点の計器の表示（D36） */
+  hud?: boolean;
 };
 
 /** 描画中の図形とホバー（座標は論理ワールド）。input.ts が書き、render が読む */
@@ -82,6 +89,9 @@ const TRAIL_MIN_LEN = 4;
 const CHAIN_PATH_MAX = 8;
 const REPLAY_GAP = 8; // ステップ
 const LEGACY_DAMP = 0.88;
+/** 背景の水の色（色あり / white） */
+const BACKDROP_WATER = new Color(0x8fcff5);
+const BACKDROP_MONO = new Color(0xd8dde4);
 
 // 削除（step2 案3）
 const DIE_SEC = 0.2;
@@ -363,6 +373,8 @@ export class Renderer {
   private readonly emitterMesh = instanced(new RingGeometry(0.6, 1, 32), MAX_EMITTERS, 1);
   private readonly glints = instanced(new CircleGeometry(1, 8), MAX_GLINTS, 3);
   private readonly flowers = new Flowers(1);
+  private readonly backdrop = new Backdrop();
+  private readonly hud = new Hud();
   private readonly vineQuads = instanced(new PlaneGeometry(1, 1), MAX_VINE_QUADS, 1);
   private readonly vines: Vine[] = [];
   private readonly vineAt = new Map<number, number>();
@@ -449,7 +461,7 @@ export class Renderer {
     this.composer.addPass(this.bloom);
     this.composer.addPass(new OutputPass());
 
-    this.scene.add(this.vineQuads, this.flowers.mesh, this.ripples, this.emitterMesh, this.trails, this.edges, this.caps, this.glints, this.balls);
+    this.scene.add(this.backdrop.object, this.hud.object, this.vineQuads, this.flowers.mesh, this.ripples, this.emitterMesh, this.trails, this.edges, this.caps, this.glints, this.balls);
     this.resize();
     addEventListener('resize', () => this.resize());
   }
@@ -707,6 +719,9 @@ export class Renderer {
   private onHit(e: Extract<SimEvent, { kind: 'hit' }>): void {
     // chord で重ねた音は光らせない（本体の音が光る）
     if (e.voice > 0) return;
+    // 背景の水に輪を立てる（くり返しは弱く）
+    this.backdrop.hit(e.x, e.y, e.step, e.velocity * (e.echo > 0 ? 0.5 : 1), e.note / 15, noteColor(e.note, this.params.colorMode));
+    this.hud.hit(e.x, e.y, e.step / HZ, e.velocity * (e.echo > 0 ? 0.5 : 1));
     const s = this.shapes.get(e.group);
     if (s && s.effect !== 'none') {
       if (this.fxWaves.length >= MAX_FX_WAVES) this.fxWaves.shift();
@@ -917,6 +932,11 @@ export class Renderer {
     }
     this.drawGlints(rs);
     this.drawEmitters(rs, dt);
+    this.backdrop.draw(p.backdrop ?? 'none', {
+      renderer: this.renderer, camera: this.camera, rs, dt, energy: this.energy, level: p.backdropLevel ?? 1,
+      base: p.colorMode === 'mono' ? BACKDROP_MONO : BACKDROP_WATER, view: this.view, scale: this.scale,
+    });
+    this.hud.update(p.hud ?? false, rs / HZ, this.scale, p.colorMode === 'mono' ? BACKDROP_MONO : BACKDROP_WATER);
     this.gc(head);
 
     this.composer.render(dt);

@@ -38,6 +38,11 @@ const LIFE_SEC = INNER_DELAY + HOLD_SEC - FADE_TAU * Math.log(FADE_MIN);
 const PETAL_LUMA = 0.3;
 const CORE_LUMA = 0.4;
 const LEAF_LUMA = 0.3;
+/** white モードの花びらと芯の彩度と輝度（色は淡く、そのぶん明るくして、はっきり見えるように） */
+const MONO_SAT = 0.2;
+const MONO_CORE_SAT = 0.1;
+const MONO_PETAL_LUMA = 0.42;
+const MONO_CORE_LUMA = 0.5;
 
 function evenLuma(c: Color, luma: number): void {
   const l = 0.2126 * c.r + 0.7152 * c.g + 0.0722 * c.b;
@@ -394,15 +399,15 @@ export class Flowers {
     this.count[start] = n;
     this.markDirty(start, n);
 
-    // 色: 図形の色から種ごとに色相をずらし、花ごとに少し揺らす。white モードでは淡い色だけ
+    // 色: 図形の色から種ごとに色相をずらし、花ごとに少し揺らす。white モードでは色を淡く、そのぶん明るく
     const c = this.c;
     base.getHSL(this.hsl);
     const hue = this.hsl.h + pal.hue + (r(4) - 0.5) * 0.1;
-    c.setHSL(hue, mono ? 0.12 : pal.sat, pal.light);
-    evenLuma(c, PETAL_LUMA);
+    c.setHSL(hue, mono ? MONO_SAT : pal.sat, pal.light);
+    evenLuma(c, mono ? MONO_PETAL_LUMA : PETAL_LUMA);
     const pr = c.r, pg = c.g, pb = c.b;
-    c.setHSL(hue + pal.coreHue, mono ? 0.05 : 0.85, 0.6);
-    evenLuma(c, CORE_LUMA);
+    c.setHSL(hue + pal.coreHue, mono ? MONO_CORE_SAT : 0.85, 0.6);
+    evenLuma(c, mono ? MONO_CORE_LUMA : CORE_LUMA);
 
     const radius = sp.size * o.radius * (0.85 + 0.3 * r(0));
     const face = Math.atan2(-o.faceY, o.faceX); // 画面（y 上向き）での方向

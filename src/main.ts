@@ -2,6 +2,8 @@ import { Audio } from './audio/audio';
 import { AudioClock } from './audio/clock';
 import { Input, TOOLS, type Tool } from './input/input';
 import { Midi } from './midi/midi';
+import { BACKDROPS, type BackdropKind } from './render/backdrop';
+import type { ColorMode } from './render/palette';
 import { Renderer, TOP_BAND_PX } from './render/render';
 import { HISTORY, HZ } from './sim/constants';
 import { midiAt } from './sim/music';
@@ -32,7 +34,6 @@ const PATTERNS: Record<string, number[]> = {
 };
 
 const DRIFT_MODES: readonly DriftMode[] = ['off', 'drift', 'phrase'];
-const COLOR_MODES = ['pitch', 'mono'] as const;
 const TRAILS = ['geometry', 'afterimage'] as const;
 const PIXEL_RATIOS = [1, 1.5, 2] as const;
 
@@ -50,12 +51,16 @@ const DEFAULTS = {
   driftAmp: 24,
   stereoWidth: 0.7,
   trail: 'geometry' as (typeof TRAILS)[number],
-  colorMode: 'pitch' as (typeof COLOR_MODES)[number],
+  /** 色は白黒（mono）だけ（D37）。音の高さで色を付ける 'pitch' はメニューから外した */
+  colorMode: 'mono' as ColorMode,
   bloomStrength: 0.9,
   afterimage: 0.8,
   drip: true,
   dripSpeed: 90,
   flowers: true,
+  backdrop: 'none' as BackdropKind,
+  backdropLevel: 1,
+  hud: false,
   idleLine: 0.3,
   visualOffsetMs: 0,
   pixelRatio: 1 as number,
@@ -69,7 +74,7 @@ const DEFAULTS = {
 const params = { ...DEFAULTS };
 
 /** 配置（SceneData）側で持つ値と、保存しない値。残りをこの端末の設定として自動保存する（D24） */
-const NOT_PREFS = new Set<string>(['bpm', 'pattern', 'rotate', 'rotationSpeed', 'drift', 'driftAmp', 'tool', 'muted', 'midiOutput']);
+const NOT_PREFS = new Set<string>(['bpm', 'pattern', 'rotate', 'rotationSpeed', 'drift', 'driftAmp', 'tool', 'muted', 'midiOutput', 'colorMode']);
 function currentPrefs(): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(params)) if (!NOT_PREFS.has(k)) out[k] = v;
@@ -114,7 +119,7 @@ Audio.setupContext();
 const audio = new Audio();
 const stored = loadStoredScene();
 if (stored) applySceneParams(stored);
-const prefs = pickPrefs(DEFAULTS, loadPrefs(), { colorMode: COLOR_MODES, trail: TRAILS, pixelRatio: PIXEL_RATIOS });
+const prefs = pickPrefs(DEFAULTS, loadPrefs(), { trail: TRAILS, pixelRatio: PIXEL_RATIOS, backdrop: BACKDROPS });
 for (const k of NOT_PREFS) delete prefs[k as keyof typeof prefs];
 Object.assign(params, prefs);
 const sim = new Sim({
@@ -227,8 +232,10 @@ const lightPop = new Popover(document.body);
   l.slider(params, 'afterimage', { label: 'trail', min: 0.7, max: 0.97, step: 0.005, format: (v) => v.toFixed(2) });
   l.toggle(params, 'drip', 'drip');
   l.slider(params, 'dripSpeed', { label: 'drip speed', min: 10, max: 300, step: 5, format: (v) => `${v}` });
-  l.choice(params, 'colorMode', 'color', () => COLOR_MODES.map((value) => ({ value, label: value === 'pitch' ? 'by pitch' : 'white' })));
   l.toggle(params, 'flowers', 'flowers');
+  l.choice(params, 'backdrop', 'water', () => BACKDROPS.map((value) => ({ value })));
+  l.toggle(params, 'hud', 'hud');
+  l.slider(params, 'backdropLevel', { label: 'water level', min: 0.2, max: 2, step: 0.05, format: (v) => v.toFixed(2) });
 }
 
 type PopName = 'motion' | 'light' | 'scenes';
@@ -312,7 +319,8 @@ motion.slider(params, 'driftAmp', { label: 'amount', min: 0, max: 80, step: 1, o
 const light = panel.section('Light', false);
 light.slider(params, 'bloomStrength', { label: 'glow', min: 0, max: 2, step: 0.01 });
 light.slider(params, 'idleLine', { label: 'lines', min: 0.15, max: 0.45, step: 0.01 });
-light.choice(params, 'colorMode', 'color', choices(COLOR_MODES));
+light.choice(params, 'backdrop', 'water', choices(BACKDROPS));
+light.toggle(params, 'hud', 'hud');
 light.choice(params, 'trail', 'trail', choices(TRAILS));
 light.slider(params, 'afterimage', { label: 'afterimage', min: 0.7, max: 0.97, step: 0.005, format: (v) => v.toFixed(2) });
 light.slider(params, 'visualOffsetMs', { label: 'light delay', min: -150, max: 40, step: 1, format: (v) => `${v} ms` });
