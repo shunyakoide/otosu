@@ -7,6 +7,8 @@ Drop, hit, glow, sound.
 otosu is a generative music piece for the eye and ear: falling balls strike the lines and shapes you draw, and every hit becomes a note and a flash of light.
 It aims to let anyone make music by feel, without playing an instrument, and to look good projected on a wall.
 
+![otosu: a square, circle and triangle glow as balls hit them, with flowers blooming over an ASCII-pattern backdrop](docs/images/screenshot.jpg)
+
 ## Development
 
 ```bash
