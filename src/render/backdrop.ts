@@ -1,5 +1,7 @@
 import { Group, type Camera, type Color, type Object3D, type WebGLRenderer } from 'three';
 import { HZ, type Bounds } from '../sim/constants';
+import { Ascii } from './ascii';
+import { Bitmap } from './bitmap';
 import { Caustics } from './caustics';
 import { Grain } from './grain';
 import { Particles } from './particles';
@@ -8,9 +10,11 @@ import { Particles } from './particles';
 //   caustics  = 光線の格子を曲げた光の膜
 //   particles = ノイズの流れに乗る粒子の軌跡（D34）
 //   grain     = 散らばった粒が、音の近くで寄り集まって形になる（D35）
+//   bitmap    = 升目に並んだ四角い点の大きさで、濃淡を見せる網点（D38）
+//   ascii     = 升目に並んだ文字の濃さで濃淡を見せ、当たると輪の上の文字が入れ替わる（D39）
 // 切り替えるときは、いったん暗くしてから次へ。時刻は renderStep から取るので、止めると背景も止まる。
 
-export const BACKDROPS = ['none', 'caustics', 'particles', 'grain'] as const;
+export const BACKDROPS = ['none', 'caustics', 'particles', 'grain', 'bitmap', 'ascii'] as const;
 export type BackdropKind = (typeof BACKDROPS)[number];
 
 /** 切り替えのフェード（秒） */
@@ -51,7 +55,7 @@ export class Backdrop {
   private lastRs = NaN;
 
   constructor() {
-    this.layers = { caustics: new Caustics(), particles: new Particles(), grain: new Grain() };
+    this.layers = { caustics: new Caustics(), particles: new Particles(), grain: new Grain(), bitmap: new Bitmap(), ascii: new Ascii() };
     for (const l of Object.values(this.layers)) {
       l.object.visible = false;
       this.object.add(l.object);
