@@ -52,7 +52,7 @@ export type ToolbarActions = {
   light: (anchor: HTMLElement) => void;
   scenes: (anchor: HTMLElement) => void;
   /** 細かい設定のパネル（, キーと同じ） */
-  settings: () => void;
+  settings: (anchor: HTMLElement) => void;
   fullscreen: () => void;
 };
 
@@ -150,7 +150,7 @@ export class Toolbar {
     const motionBtn: HTMLButtonElement = btn(ICONS.motion, 'motion', () => on.motion(motionBtn));
     const lightBtn: HTMLButtonElement = btn(ICONS.light, 'light', () => on.light(lightBtn));
     const soundBtn: HTMLButtonElement = btn(ICONS.music, 'sound', () => on.sound(soundBtn));
-    const settingsBtn = btn(ICONS.settings, 'settings (,)', on.settings);
+    const settingsBtn: HTMLButtonElement = btn(ICONS.settings, 'settings (,)', () => on.settings(settingsBtn));
     sep();
     const scenesBtn: HTMLButtonElement = btn(ICONS.scenes, 'save / load scenes', () => on.scenes(scenesBtn));
     this.popBtns = { motion: motionBtn, light: lightBtn, sound: soundBtn, settings: settingsBtn, scenes: scenesBtn };
@@ -213,6 +213,11 @@ export class Toolbar {
   setTempo(bpm: number): void {
     this.bpm = Math.min(TEMPO_MAX, Math.max(TEMPO_MIN, Math.round(bpm)));
     this.tempoOut.textContent = String(this.bpm);
+  }
+
+  /** 小窓を開くボタン（キーで開くときの位置合わせ用） */
+  button(which: PopName): HTMLButtonElement {
+    return this.popBtns[which];
   }
 
   /** 開いている小窓のボタンを光らせる（null で全部消す） */

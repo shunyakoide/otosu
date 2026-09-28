@@ -1,6 +1,6 @@
 import './panel.css';
 
-// 設定パネル（D24）。細い線のスライダー・文字だけのボタン・並べた選択肢で、画面に溶け込ませる。
+// 設定パネルと小窓（D24）。細い線のスライダー・文字だけのボタン・並べた選択肢で、画面に溶け込ませる。
 // 値はオブジェクトを直接書き換え、refresh() で表示を合わせる（外から値を変えたとき用）。
 
 type Obj = Record<string, unknown>;
@@ -190,70 +190,12 @@ export class Section {
   }
 }
 
-export class Panel {
-  readonly el: HTMLElement;
-  /** × で閉じたとき */
-  onClose: (() => void) | null = null;
-  private readonly scroll: HTMLElement;
-  private readonly note: HTMLElement;
-  private readonly refreshers: (() => void)[] = [];
-  private noteTimer = 0;
-
-  constructor(parent: HTMLElement, title: string) {
-    this.el = el('aside', 'pn pn-panel');
-    // 見出しと閉じるボタン（タッチでは , キーが使えないので、閉じる手段をここに置く）
-    const top = el('header', 'pn-top');
-    const close = el('button', 'pn-close', '×');
-    close.type = 'button';
-    close.title = 'close (,)';
-    close.setAttribute('aria-label', 'close');
-    close.addEventListener('click', () => {
-      this.setOpen(false);
-      this.onClose?.();
-    });
-    top.append(el('span', 'pn-title', title), close);
-    this.scroll = el('div', 'pn-scroll');
-    this.note = el('div', 'pn-note');
-    this.el.append(top, this.scroll, this.note);
-    // 押したボタンにフォーカスが残ると、Space でもう一度押してしまうので外す
-    this.el.addEventListener('click', (e) => {
-      if (e.target instanceof HTMLButtonElement) e.target.blur();
-    });
-    parent.appendChild(this.el);
-  }
-
-  section(title: string, open = true): Section {
-    return new Section(this.scroll, title, open, this.refreshers);
-  }
-
-  get isOpen(): boolean {
-    return this.el.classList.contains('open');
-  }
-
-  setOpen(open: boolean): void {
-    this.el.classList.toggle('open', open);
-    if (open) this.refresh();
-  }
-
-  refresh(): void {
-    for (const fn of this.refreshers) fn();
-  }
-
-  /** 下に短い知らせを出す（保存した・コピーした など） */
-  flash(text: string): void {
-    this.note.textContent = text;
-    this.note.classList.add('show');
-    clearTimeout(this.noteTimer);
-    this.noteTimer = window.setTimeout(() => this.note.classList.remove('show'), 1800);
-  }
-}
-
 /** ツールバーのボタンの真下に開く小窓。外を押すと閉じる */
 export class Popover {
   readonly el: HTMLElement;
   onClose: (() => void) | null = null;
-  private readonly body: HTMLElement;
-  private readonly refreshers: (() => void)[] = [];
+  protected readonly body: HTMLElement;
+  protected readonly refreshers: (() => void)[] = [];
 
   constructor(parent: HTMLElement) {
     this.el = el('aside', 'pn pop ui');
@@ -297,6 +239,16 @@ export class Popover {
     if (!this.isOpen) return;
     this.el.classList.remove('open');
     this.onClose?.();
+  }
+}
+
+/**
+ * 設定（D24 → D52）。ほかの小窓と同じくボタンの下に開き、外を押すと閉じる。
+ * 中身が多いので、区切りは見出しを押して畳める
+ */
+export class Panel extends Popover {
+  override section(title = '', open = true): Section {
+    return new Section(this.body, title, open, this.refreshers);
   }
 }
 

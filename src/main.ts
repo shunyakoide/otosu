@@ -188,7 +188,7 @@ const toolbar = new Toolbar(document.body, TOOLS, {
   light: (anchor) => togglePopover('light', anchor),
   sound: (anchor) => togglePopover('sound', anchor),
   scenes: (anchor) => togglePopover('scenes', anchor),
-  settings: () => toggleSettings(),
+  settings: (anchor) => togglePopover('settings', anchor),
   fullscreen: () => toggleFullscreen(),
 });
 toolbar.el.classList.add('ui');
@@ -297,45 +297,34 @@ const soundPop = new Popover(document.body);
   m.hint('a soft tone that keeps playing the song\'s chord in the background');
 }
 
-type PopName = 'motion' | 'light' | 'sound' | 'scenes';
+// 細かい調整（D24 → D52）。ツールバーの小窓にないものだけを置き、ほかの小窓と同じくボタンの下に開く
+const panel = new Panel(document.body);
+
+type PopName = 'motion' | 'light' | 'sound' | 'settings' | 'scenes';
 const popovers: Record<PopName, { isOpen: boolean; close(): void; onClose: (() => void) | null }> = {
-  motion: motionPop, light: lightPop, sound: soundPop, scenes,
+  motion: motionPop, light: lightPop, sound: soundPop, settings: panel, scenes,
 };
-/** 値を外から変えたとき（テンポ・読み込み・リセット）に、パネルと小窓の表示を合わせる */
+/** 値を外から変えたとき（テンポ・読み込み・リセット）に、小窓の表示を合わせる */
 function refreshUI(): void {
-  panel.refresh();
-  for (const pop of [motionPop, lightPop, soundPop]) pop.refresh();
+  for (const pop of [motionPop, lightPop, soundPop, panel]) pop.refresh();
 }
 for (const pop of Object.values(popovers)) {
   pop.onClose = () => {
     if (!Object.values(popovers).some((p) => p.isOpen)) toolbar.setOpenPopover(null);
   };
 }
-function togglePopover(name: PopName, anchor: HTMLElement): void {
+function togglePopover(name: PopName, anchor: HTMLElement = toolbar.button(name)): void {
   const wasOpen = popovers[name].isOpen;
   closePopovers();
   if (wasOpen) return;
-  toggleSettings(false);
   if (name === 'scenes') {
     scenes.update(library, lib.current, lib.name);
     scenes.open(anchor);
-  } else ({ motion: motionPop, light: lightPop, sound: soundPop })[name].open(anchor);
+  } else ({ motion: motionPop, light: lightPop, sound: soundPop, settings: panel })[name].open(anchor);
   toolbar.setOpenPopover(name);
 }
 function closePopovers(): void {
   for (const pop of Object.values(popovers)) pop.close();
-}
-
-// 細かい調整（普段は出さない。, キーで開く）
-// ツールバーの小窓にないものだけを置く（D46）
-const panel = new Panel(document.body, 'settings');
-panel.el.classList.add('ui');
-panel.onClose = () => toggleSettings(false);
-function toggleSettings(open = !panel.isOpen): void {
-  if (open) closePopovers();
-  panel.setOpen(open);
-  if (open) toolbar.setOpenPopover('settings');
-  else if (!Object.values(popovers).some((p) => p.isOpen)) toolbar.setOpenPopover(null);
 }
 function toggleFullscreen(): void {
   if (document.fullscreenElement) void document.exitFullscreen();
@@ -562,10 +551,9 @@ addEventListener('keydown', (e) => {
   } else if (e.key === 'h' || e.key === 'H') {
     document.body.classList.toggle('ui-hidden');
   } else if (e.key === 'Escape') {
-    toggleSettings(false);
     closePopovers();
   } else if (e.key === ',') {
-    toggleSettings();
+    togglePopover('settings');
   } else if (e.key === 'c' || e.key === 'C') {
     sim.enqueue({ kind: 'clearSegments' });
   } else if (e.key === 'r' || e.key === 'R') {
