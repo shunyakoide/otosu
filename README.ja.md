@@ -50,14 +50,15 @@ Vite + TypeScript + three.js + Tone.js で作っています。物理（ボー�
 - 音量とミュート
 - 全消去
 - 小窓: motion / light / sound / settings / scenes
+- フルスクリーン（対応環境のみ）
 
 | 小窓 | 内容 |
 |---|---|
-| motion | 図形の回転（spin）、放出口の揺らぎ（sway） |
+| motion | 動きのオン／オフ（move）、図形の回転（spin）、放出口の揺らぎ（sway）とその動き方（glide / step） |
 | light | 光の強さ、軌跡の描き方、当たったときの演出（drip / flowers / readout）、背景の種類 |
 | sound | リズム（放出口の周期）、曲（和音の進み方）、背景で鳴り続ける和音（hum） |
 | settings | ステレオの広がり、音と光のずれ（light delay）、解像度、MIDI、キー操作の一覧 |
-| scenes | 配置の保存と読み込み |
+| scenes | 配置の保存と読み込み、ファイルへの書き出し・読み込み、リンクのコピー |
 
 図形の形で楽器が変わります。
 
@@ -71,7 +72,7 @@ Vite + TypeScript + three.js + Tone.js で作っています。物理（ボー�
 
 ハーモニーは8小節ごとに移ろいます。曲は sound の小窓で選べます。
 - bright: C–F–C–G
-- dusk: 短調
+- dusk: Cm–A♭–E♭–B♭（短調）
 - wistful: F–G–Em–Am
 - still: 和音が変わらない
 
@@ -84,10 +85,10 @@ Vite + TypeScript + three.js + Tone.js で作っています。物理（ボー�
 2. もう一度 R で止めると `otosu-日付-時刻.mid` が保存される
 3. GarageBand にドラッグ＆ドロップすると、ソフトウェア音源のトラックとして読み込まれる
 
-### ライブで送る（Mac の IAC Driver 経由、Chrome が必要）
+### ライブで送る（Mac の IAC Driver 経由、Chrome などの Chromium 系ブラウザが必要）
 1. 「Audio MIDI 設定」アプリ → メニューの「ウインドウ」→「MIDI スタジオを表示」
 2. 「IAC ドライバ」をダブルクリックし、「装置はオンライン」にチェックを入れる
-3. settings の `MIDI` → `connect` を押し、ブラウザの許可ダイアログで許可する（IAC があれば自動で選ばれる）
+3. settings の `MIDI` → `connect` を押し、ブラウザの許可ダイアログで許可する（出力を未選択なら、IAC があれば自動で選ばれる）
 4. GarageBand でソフトウェア音源のトラックを作ると、otosu の音で鳴る（GarageBand はすべての MIDI 入力を受け取る）
 5. 円（キック・タム）と四角（ウッドブロック）は GM ドラムとして `drums` のチャンネル（既定 10）に送る。録音した .mid でも同じ
 6. 内蔵音と二重に鳴るのが気になる場合は `built-in` をオフにする。DAW 側の遅れは `offset` で合わせる

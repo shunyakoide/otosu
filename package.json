@@ -2,7 +2,15 @@
   "name": "otosu",
   "private": true,
   "version": "0.0.0",
+  "description": "A generative music piece: falling balls hit the lines and shapes you draw, and every hit becomes a note and a flash of light.",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/shunyakoide/otosu.git"
+  },
+  "engines": {
+    "node": ">=20.19"
+  },
   "type": "module",
   "scripts": {
     "dev": "vite",

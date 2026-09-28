@@ -1,4 +1,5 @@
 // 背景（D33〜D43）のシェーダーで共通の GLSL。
+// NOISE・NOISE3・NOISED は Inigo Quilez の勾配ノイズ・値ノイズ（MIT, https://iquilezles.org/articles/）をもとにしている。
 
 /** 画面いっぱいの四角（PlaneGeometry(2, 2) / FullScreenQuad）。vUv を渡す */
 export const QUAD_VERT = /* glsl */ `

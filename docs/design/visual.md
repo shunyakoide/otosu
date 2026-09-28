@@ -1,5 +1,7 @@
 # otosu — 描画設計（ステップ1 / MVP）
 
+> 当時の提案。採否と現行の仕様は [decisions.md](decisions.md) を参照（食い違うときはそちらが優先）。
+
 担当: ビジュアル。前提は `docs/concept.md`（素の Three.js + UnrealBloomPass / AfterimagePass、React/R3F なし）。
 方針: **暗い「待機状態」と、衝突の瞬間の HDR フラッシュを明確に分ける**。ブルームは閾値を超えたフラッシュにだけかける。
 
