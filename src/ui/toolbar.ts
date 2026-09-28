@@ -21,6 +21,8 @@ const ICONS = {
   scenes: svg('<path d="M6 4h9l3 3v13H6z"/><path d="M9 4v5h6V4M9 20v-6h6v6"/>'),
   // 回る・揺れる: 軌道と、その上の小さな玉（再読み込みの矢印に見えないように。D45）
   motion: svg('<ellipse cx="12" cy="12" rx="8.5" ry="4" transform="rotate(-25 12 12)"/><circle cx="12" cy="12" r="1.6"/><circle cx="19.2" cy="8.6" r="1.1" fill="currentColor"/>'),
+  // 曲・リズム（D51）: 音符（ミュートのスピーカーと見分けがつくように）
+  music: svg('<path d="M9 17.5V6.5l10-2.5v11"/><circle cx="6.5" cy="17.5" r="2.5"/><circle cx="16.5" cy="15" r="2.5"/>'),
   light: svg('<circle cx="12" cy="12" r="3.5"/><path d="M12 3v2M12 19v2M3 12h2M19 12h2M5.6 5.6l1.4 1.4M17 17l1.4 1.4M5.6 18.4 7 17M17 7l1.4-1.4"/>'),
   settings: svg('<path d="M4 7h9M17 7h3M4 17h3M11 17h9"/><circle cx="15" cy="7" r="2"/><circle cx="9" cy="17" r="2"/>'),
   minus: svg('<path d="M7 12h10"/>'),
@@ -46,6 +48,7 @@ export type ToolbarActions = {
   tempo: (bpm: number) => void;
   clear: () => void;
   motion: (anchor: HTMLElement) => void;
+  sound: (anchor: HTMLElement) => void;
   light: (anchor: HTMLElement) => void;
   scenes: (anchor: HTMLElement) => void;
   /** 細かい設定のパネル（, キーと同じ） */
@@ -54,7 +57,7 @@ export type ToolbarActions = {
 };
 
 /** 小窓・パネルを開くボタン */
-type PopName = 'motion' | 'light' | 'settings' | 'scenes';
+type PopName = 'motion' | 'light' | 'sound' | 'settings' | 'scenes';
 
 export const TEMPO_MIN = 60;
 export const TEMPO_MAX = 140;
@@ -146,10 +149,11 @@ export class Toolbar {
     sep();
     const motionBtn: HTMLButtonElement = btn(ICONS.motion, 'motion', () => on.motion(motionBtn));
     const lightBtn: HTMLButtonElement = btn(ICONS.light, 'light', () => on.light(lightBtn));
+    const soundBtn: HTMLButtonElement = btn(ICONS.music, 'sound', () => on.sound(soundBtn));
     const settingsBtn = btn(ICONS.settings, 'settings (,)', on.settings);
     sep();
     const scenesBtn: HTMLButtonElement = btn(ICONS.scenes, 'save / load scenes', () => on.scenes(scenesBtn));
-    this.popBtns = { motion: motionBtn, light: lightBtn, settings: settingsBtn, scenes: scenesBtn };
+    this.popBtns = { motion: motionBtn, light: lightBtn, sound: soundBtn, settings: settingsBtn, scenes: scenesBtn };
     // iPhone の Safari のように全画面にできない環境ではボタンを出さない
     if (document.fullscreenEnabled) btn(ICONS.fullscreen, 'fullscreen (F)', on.fullscreen);
 

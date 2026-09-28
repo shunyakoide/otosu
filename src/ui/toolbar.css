@@ -72,4 +72,6 @@
   }
   #toolbar i { display: none; }
   #toolbar-help { text-align: center; }
+  /* 狭いタッチ画面: 音量は本体のボタンで変えられるので、つまみを隠して 2 段に収める（D51） */
+  @media (hover: none) { #toolbar .tb-volume input { display: none; } }
 }

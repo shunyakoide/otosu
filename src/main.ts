@@ -181,11 +181,12 @@ const toolbar = new Toolbar(document.body, TOOLS, {
   tempo: (bpm) => {
     params.bpm = bpm;
     setTempo();
-    panel.refresh();
+    refreshUI();
   },
   clear: () => sim.enqueue({ kind: 'clearSegments' }),
   motion: (anchor) => togglePopover('motion', anchor),
   light: (anchor) => togglePopover('light', anchor),
+  sound: (anchor) => togglePopover('sound', anchor),
   scenes: (anchor) => togglePopover('scenes', anchor),
   settings: () => toggleSettings(),
   fullscreen: () => toggleFullscreen(),
@@ -259,9 +260,11 @@ const lightPop = new Popover(document.body);
   l.hint('the halo around the light');
   l.slider(params, 'idleLine', { label: 'at rest', min: 0.15, max: 0.45, step: 0.01 });
   l.hint('how bright shapes are between hits');
-  // trail style が blur のときは残像の長さが決まっている（render の LEGACY_DAMP）ので薄くする
+  const TRAIL_LABELS = { geometry: 'tail', afterimage: 'blur' } as const;
+  l.choice(params, 'trail', 'trail style', choices(TRAILS, (t) => TRAIL_LABELS[t]));
+  // blur のときは残像の長さが決まっている（render の LEGACY_DAMP）ので薄くする
   l.slider(params, 'afterimage', { label: 'trail', min: 0.7, max: 0.97, step: 0.005, format: (v) => v.toFixed(2), enabled: () => params.trail === 'geometry' });
-  l.hint(() => params.trail === 'geometry' ? 'how long the balls\' tails are' : 'only with the tail style (settings → display)');
+  l.hint(() => params.trail === 'geometry' ? 'balls draw a tail; this sets how long' : 'no tail, the screen keeps a short blur');
   const h = lightPop.section('on hit');
   h.toggle(params, 'drip', 'drip');
   h.slider(params, 'dripSpeed', { label: 'speed', min: 10, max: 300, step: 5, format: (v) => `${v}`, enabled: () => params.drip });
@@ -275,10 +278,34 @@ const lightPop = new Popover(document.body);
   b.slider(params, 'backdropLevel', { label: 'level', min: 0.2, max: 2, step: 0.05, format: (v) => v.toFixed(2), enabled: () => params.backdrop !== 'none' });
 }
 
-type PopName = 'motion' | 'light' | 'scenes';
+// 音: 曲そのものを変えるもの（D51。弾きながら触るので settings から小窓に出した）
+const soundPop = new Popover(document.body);
+{
+  const m = soundPop.section();
+  m.choice(params, 'pattern', 'rhythm', () => Object.keys(PATTERNS).map((value) => ({ value })), () => setTempo());
+  m.hint(() => {
+    const beats = PATTERNS[params.pattern]!;
+    return `${beats.length} emitters drop a ball every ${beats.join(' / ')} beats`;
+  });
+  // 曲: 和音の進み方・調・後ろの和音の音色をまとめて選ぶ（D48）
+  m.choice(params, 'song', 'song', choices(SONG_IDS), () => setSong());
+  m.hint('changes the chords of every sound, shapes included');
+  m.toggle(params, 'pad', 'hum', (on) => started && audio.setPad(on));
+  m.slider(params, 'padLevel', {
+    label: 'hum vol', min: 0, max: 1, step: 0.01, enabled: () => params.pad, onInput: (v) => started && audio.setPadLevel(v),
+  });
+  m.hint('a soft tone that keeps playing the song\'s chord in the background');
+}
+
+type PopName = 'motion' | 'light' | 'sound' | 'scenes';
 const popovers: Record<PopName, { isOpen: boolean; close(): void; onClose: (() => void) | null }> = {
-  motion: motionPop, light: lightPop, scenes,
+  motion: motionPop, light: lightPop, sound: soundPop, scenes,
 };
+/** 値を外から変えたとき（テンポ・読み込み・リセット）に、パネルと小窓の表示を合わせる */
+function refreshUI(): void {
+  panel.refresh();
+  for (const pop of [motionPop, lightPop, soundPop]) pop.refresh();
+}
 for (const pop of Object.values(popovers)) {
   pop.onClose = () => {
     if (!Object.values(popovers).some((p) => p.isOpen)) toolbar.setOpenPopover(null);
@@ -292,7 +319,7 @@ function togglePopover(name: PopName, anchor: HTMLElement): void {
   if (name === 'scenes') {
     scenes.update(library, lib.current, lib.name);
     scenes.open(anchor);
-  } else (name === 'motion' ? motionPop : lightPop).open(anchor);
+  } else ({ motion: motionPop, light: lightPop, sound: soundPop })[name].open(anchor);
   toolbar.setOpenPopover(name);
 }
 function closePopovers(): void {
@@ -348,31 +375,13 @@ const setDrift = () => {
   sim.enqueue({ kind: 'setDrift', mode: params.drift, amp: params.driftAmp });
 };
 
-const sound = panel.section('Sound');
-sound.choice(params, 'pattern', 'rhythm', () => Object.keys(PATTERNS).map((value) => ({ value })), setTempo);
-sound.hint(() => {
-  const beats = PATTERNS[params.pattern]!;
-  return `${beats.length} emitters drop a ball every ${beats.join(' / ')} beats`;
-});
-// 曲: 和音の進み方・調・後ろの和音の音色をまとめて選ぶ（D48）
-sound.choice(params, 'song', 'song', choices(SONG_IDS), setSong);
-sound.hint('changes the chords of every sound, shapes included');
-sound.toggle(params, 'pad', 'hum', (on) => started && audio.setPad(on));
-sound.slider(params, 'padLevel', {
-  label: 'hum vol', min: 0, max: 1, step: 0.01, enabled: () => params.pad, onInput: (v) => started && audio.setPadLevel(v),
-});
-sound.hint('a soft tone that keeps playing the song\'s chord in the background');
-sound.slider(params, 'stereoWidth', { label: 'stereo', min: 0, max: 1, step: 0.05, onInput: (v) => started && audio.setStereoWidth(v) });
-
-// glow・lines・trail の長さ・背景は light の小窓。ここは会場で合わせるもの
-const display = panel.section('Display');
-const TRAIL_LABELS = { geometry: 'tail', afterimage: 'blur' } as const;
-display.choice(params, 'trail', 'trail style', choices(TRAILS, (t) => TRAIL_LABELS[t]));
-display.hint(() => params.trail === 'geometry' ? 'balls draw a tail behind them' : 'no tail, the screen keeps a short blur');
-display.slider(params, 'visualOffsetMs', { label: 'light delay', min: -150, max: 40, step: 1, format: (v) => `${v} ms` });
-display.hint('lower it if the light comes before the sound (e.g. bluetooth)');
-display.choice(params, 'pixelRatio', 'resolution', choices(PIXEL_RATIOS, (r) => `×${r}`), (r) => renderer.setPixelRatio(r));
-display.hint('higher is sharper but heavier');
+// 会場・端末に合わせて一度決めるもの（D51）。曲は sound、軌跡の見た目は light の小窓
+const setup = panel.section('Setup');
+setup.slider(params, 'stereoWidth', { label: 'stereo', min: 0, max: 1, step: 0.05, onInput: (v) => started && audio.setStereoWidth(v) });
+setup.slider(params, 'visualOffsetMs', { label: 'light delay', min: -150, max: 40, step: 1, format: (v) => `${v} ms` });
+setup.hint('lower it if the light comes before the sound (e.g. bluetooth)');
+setup.choice(params, 'pixelRatio', 'resolution', choices(PIXEL_RATIOS, (r) => `×${r}`), (r) => renderer.setPixelRatio(r));
+setup.hint('higher is sharper but heavier');
 
 const midiPane = panel.section('MIDI', false);
 const midi = new Midi({
@@ -403,7 +412,7 @@ async function connectMidi(): Promise<void> {
     console.warn('[otosu] MIDI', err);
     connectBtn.textContent = Midi.supported ? 'permission denied' : 'unsupported (use Chrome)';
   }
-  panel.refresh();
+  refreshUI();
 }
 
 // キー操作の一覧（画面下の案内は少しで消えるので、ここでいつでも見られるように）
@@ -457,7 +466,7 @@ function loadSceneData(scene: SceneData): void {
     audio.setSong(params.song);
   }
   toolbar.setTempo(params.bpm);
-  panel.refresh();
+  refreshUI();
 }
 
 function exportSceneFile(): void {
@@ -495,7 +504,7 @@ function resetSettings(): void {
   applyPrefs();
   toolbar.setTempo(params.bpm);
   toolbar.setVolume(params.volume);
-  panel.refresh();
+  refreshUI();
 }
 
 /** 端末ごとの設定（音量・光など）を音と描画に反映する */

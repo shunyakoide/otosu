@@ -285,6 +285,11 @@ export class Popover {
   open(anchor: HTMLElement): void {
     placeUnder(this.el, anchor);
     this.el.classList.add('open');
+    this.refresh();
+  }
+
+  /** 値を外から変えたとき（読み込み・リセット）に表示を合わせる */
+  refresh(): void {
     for (const fn of this.refreshers) fn();
   }
 
