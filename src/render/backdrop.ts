@@ -38,9 +38,8 @@ export type LayerFrame = {
   /** 明るさ（設定 × フェード） */
   level: number;
   base: Color;
-  /** 見えている範囲（ワールド）と縮尺（CSS px / ワールド px） */
+  /** 見えている範囲（ワールド） */
   view: Bounds;
-  scale: number;
 };
 
 /** 背景の1種類 */

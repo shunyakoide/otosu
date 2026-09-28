@@ -1,6 +1,7 @@
-import { HalfFloatType, LinearFilter, NoBlending, ShaderMaterial, WebGLRenderTarget, type Texture, type WebGLRenderer } from 'three';
+import { HalfFloatType, LinearFilter, NoBlending, ShaderMaterial, Vector2, WebGLRenderTarget, type Texture, type WebGLRenderer } from 'three';
 import { FullScreenQuad, Pass } from 'three/addons/postprocessing/Pass.js';
 import { CopyShader } from 'three/addons/shaders/CopyShader.js';
+import { disposeQuad } from './layer';
 
 // 残像（D31）。AfterimagePass と同じく前の絵を少し暗くして重ねる。
 // drip をオンにすると、明るいところ（ボール・当たった光）だけを入れ、前の絵を少し上から読んで重ねるので、
@@ -80,7 +81,7 @@ export class FlowPass extends Pass {
     streak: { value: 0 },
     sway: { value: 0 },
     time: { value: 0 },
-    res: { value: [1, 1] },
+    res: { value: new Vector2(1, 1) },
   };
   private readonly show = {
     tNew: { value: null as Texture | null },
@@ -103,7 +104,7 @@ export class FlowPass extends Pass {
   set(dt: number, o: FlowOptions, w: number, h: number): void {
     const u = this.u;
     u.time.value += dt;
-    u.res.value = [w, h];
+    u.res.value.set(w, h);
     u.damp.value = Math.pow(o.drip ? Math.max(o.damp, DRIP_DAMP) : o.damp, dt * 60);
     u.gate.value = o.drip ? 1 : 0;
     u.shift.value = o.drip ? (o.dripSpeed * dt) / h : 0;
@@ -133,9 +134,7 @@ export class FlowPass extends Pass {
   override dispose(): void {
     this.comp.dispose();
     this.old.dispose();
-    (this.accumQuad.material as ShaderMaterial).dispose();
-    (this.showQuad.material as ShaderMaterial).dispose();
-    this.accumQuad.dispose();
-    this.showQuad.dispose();
+    disposeQuad(this.accumQuad);
+    disposeQuad(this.showQuad);
   }
 }

@@ -16,7 +16,15 @@ export const PLACE_BOUNDS: Bounds = { minX: -WORLD_W, maxX: 2 * WORLD_W, maxY: 4
 
 /** 物理の固定タイムステップ */
 export const HZ = 120;
+/** テンポの範囲（ツールバーでも、読み込む配置でも） */
+export const BPM_MIN = 40;
+export const BPM_MAX = 200;
 export const DT = 1 / HZ;
+
+/** beats 拍のステップ数（小数のまま。放出・くり返しの格子と区間の長さの共通の式。D10） */
+export function beatSteps(beats: number, bpm: number, hz: number = HZ): number {
+  return (beats * hz * 60) / bpm;
+}
 
 export const G = 1400; // 重力 px/s²
 export const BALL_RADIUS = 5;

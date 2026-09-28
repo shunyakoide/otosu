@@ -5,8 +5,9 @@ import {
 } from 'three';
 import { FullScreenQuad } from 'three/addons/postprocessing/Pass.js';
 import type { BackdropLayer, LayerFrame } from './backdrop';
-import { CubeView, ISO_PITCH, ISO_YAW, NOISE3, NOISED } from './cube';
-import { QUAD_VERT } from './particles';
+import { CubeView, ISO_PITCH, ISO_YAW } from './cube';
+import { NOISE3, NOISED, QUAD_VERT, RAND } from './glsl';
+import { disposeMesh, disposeQuad, HitRing } from './layer';
 
 // 背景の流線（D42、fibers）。立方体の中の curl noise（渦を巻くノイズの流れ）の流線を、細い筒で描く。
 // 升目に並べた点から、流れに沿って前と後ろへたどった線なので、近い線はそろって流れ、束になって波打つ。
@@ -81,8 +82,7 @@ vec3 flow(vec3 p, out float glow) {
   return v / (length(v) + 1e-5);
 }
 
-float rnd1(vec2 p) { return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453); }
-
+${RAND}
 void main() {
   vec2 px = floor(gl_FragCoord.xy);
   float gx = floor(px.x / ${(SEG + 1).toFixed(1)});
@@ -91,7 +91,7 @@ void main() {
   float gz = floor(px.y / ${GRID.toFixed(1)});
   // 根元: 升目の点を少しだけずらす
   vec3 id = vec3(gx, gy, gz);
-  vec3 j = vec3(rnd1(id.xy + id.z * 7.1), rnd1(id.yz + id.x * 3.3), rnd1(id.zx + id.y * 5.7)) - 0.5;
+  vec3 j = vec3(rand(id.xy + id.z * 7.1), rand(id.yz + id.x * 3.3), rand(id.zx + id.y * 5.7)) - 0.5;
   vec3 p = ((id + 0.5 + 0.25 * j) / ${GRID.toFixed(1)}) * 2.0 - 1.0;
   // 真ん中の節から、前（k が大きい）と後ろへたどる
   float n = k - ${(SEG / 2).toFixed(1)};
@@ -219,11 +219,8 @@ export class Fibers implements BackdropLayer {
     depth: { value: new Vector2(4, 6) },
   };
   private readonly showU = { src: { value: this.target.texture }, level: { value: 1 } };
-  private readonly hp = Array.from({ length: MAX_HITS }, () => new Vector3());
-  private readonly hAt = new Float64Array(MAX_HITS).fill(-Infinity);
-  private readonly hV = new Float32Array(MAX_HITS);
-  private readonly hPitch = new Float32Array(MAX_HITS);
-  private head = 0;
+  private readonly ring = new HitRing(MAX_HITS, HIT_SEC);
+  private readonly hp = new Vector3();
   private readonly size = new Vector2();
   private readonly clear = new Color();
   private drawn = false;
@@ -261,12 +258,8 @@ export class Fibers implements BackdropLayer {
   }
 
   hit(x: number, y: number, at: number, strength: number, pitch: number, _color: Color): void {
-    const i = this.head;
-    this.head = (i + 1) % MAX_HITS;
-    this.view.toLocal(x, y, this.hp[i]!);
-    this.hAt[i] = at;
-    this.hV[i] = strength;
-    this.hPitch[i] = pitch;
+    const p = this.view.toLocal(x, y, this.hp);
+    this.ring.push(p.x, p.y, p.z, at, strength, pitch);
   }
 
   update(f: LayerFrame): void {
@@ -288,13 +281,7 @@ export class Fibers implements BackdropLayer {
     this.view.axis(this.traceU.axis.value);
     // 時刻 × 速さにすると、盛り上がりが変わった瞬間に流れがとぶので、フレームごとに足していく
     this.traceU.drift.value += f.step * SPEED * (1 + f.energy);
-    for (let i = 0; i < MAX_HITS; i++) {
-      const age = f.time - this.hAt[i]!;
-      const live = age >= 0 && age < HIT_SEC;
-      const p = this.hp[i]!;
-      this.hitsU[i]!.set(p.x, p.y, p.z, live ? age : 0);
-      this.hitsVU[i]!.set(live ? this.hV[i]! : 0, this.hPitch[i]!);
-    }
+    this.ring.fill3(this.hitsU, this.hitsVU, f.time);
     this.u.shape.value = this.shape.texture;
     this.u.halfRes.value.set(w / 2, h / 2);
     this.u.focal.value = this.view.focal;
@@ -319,10 +306,8 @@ export class Fibers implements BackdropLayer {
   dispose(): void {
     this.target.dispose();
     this.shape?.dispose();
-    this.trace.dispose();
-    this.lines.geometry.dispose();
-    (this.lines.material as ShaderMaterial).dispose();
-    this.object.geometry.dispose();
-    (this.object.material as ShaderMaterial).dispose();
+    disposeQuad(this.trace);
+    disposeMesh(this.lines);
+    disposeMesh(this.object);
   }
 }

@@ -2,7 +2,9 @@ import {
   AdditiveBlending, BufferAttribute, BufferGeometry, Color, Group, LineSegments, Points, ShaderMaterial, Vector2, Vector3, Vector4,
 } from 'three';
 import type { BackdropLayer, LayerFrame } from './backdrop';
-import { CubeView, NOISE3, NOISED } from './cube';
+import { CubeView } from './cube';
+import { NOISE3, NOISED } from './glsl';
+import { disposeMesh, HitRing } from './layer';
 
 // 背景のノイズの塊（D43、volume）。線だけの立方体の中に、3D のノイズの塊を点の集まりで描く。
 // 塊の形は「濃さ = ノイズ + 真ん中ほど濃い」がしきい値になる面（等値面）。点は面の近くのものだけを残し、
@@ -160,11 +162,8 @@ export class Volume implements BackdropLayer {
     level: { value: 1 },
   };
   private readonly cornerU = { ...this.edgeU, size: { value: 4 } };
-  private readonly hp = Array.from({ length: MAX_HITS }, () => new Vector3());
-  private readonly hAt = new Float64Array(MAX_HITS).fill(-Infinity);
-  private readonly hV = new Float32Array(MAX_HITS);
-  private readonly hPitch = new Float32Array(MAX_HITS);
-  private head = 0;
+  private readonly ring = new HitRing(MAX_HITS, HIT_SEC);
+  private readonly hp = new Vector3();
   private readonly size = new Vector2();
 
   constructor() {
@@ -209,12 +208,8 @@ export class Volume implements BackdropLayer {
   }
 
   hit(x: number, y: number, at: number, strength: number, pitch: number, _color: Color): void {
-    const i = this.head;
-    this.head = (i + 1) % MAX_HITS;
-    this.view.toLocal(x, y, this.hp[i]!);
-    this.hAt[i] = at;
-    this.hV[i] = strength;
-    this.hPitch[i] = pitch;
+    const p = this.view.toLocal(x, y, this.hp);
+    this.ring.push(p.x, p.y, p.z, at, strength, pitch);
   }
 
   update(f: LayerFrame): void {
@@ -229,19 +224,10 @@ export class Volume implements BackdropLayer {
     this.u.level.value = f.level;
     this.edgeU.level.value = f.level;
     this.cornerU.size.value = 4 * pr;
-    for (let i = 0; i < MAX_HITS; i++) {
-      const age = f.time - this.hAt[i]!;
-      const live = age >= 0 && age < HIT_SEC;
-      const p = this.hp[i]!;
-      this.hitsU[i]!.set(p.x, p.y, p.z, live ? age : 0);
-      this.hitsVU[i]!.set(live ? this.hV[i]! : 0, this.hPitch[i]!);
-    }
+    this.ring.fill3(this.hitsU, this.hitsVU, f.time);
   }
 
   dispose(): void {
-    for (const o of [this.dots, this.edges, this.corners]) {
-      o.geometry.dispose();
-      (o.material as ShaderMaterial).dispose();
-    }
+    for (const o of [this.dots, this.edges, this.corners]) disposeMesh(o);
   }
 }

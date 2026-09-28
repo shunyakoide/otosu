@@ -5,8 +5,8 @@
 import { validateScene } from '../scene/scene';
 import type { SceneData } from '../sim/types';
 
-export const PREFS_KEY = 'otosu.prefs.v1';
-export const LIBRARY_KEY = 'otosu.library.v1';
+const PREFS_KEY = 'otosu.prefs.v1';
+const LIBRARY_KEY = 'otosu.library.v1';
 const FILE_KIND = 'otosu.scene';
 
 export type Library = Record<string, { code: string; savedAt: number }>;
@@ -20,11 +20,13 @@ function readJson(key: string): unknown {
   }
 }
 
-function writeJson(key: string, value: unknown): void {
+/** 保存できたか（容量がいっぱい・プライベートモード等では false） */
+function writeJson(key: string, value: unknown): boolean {
   try {
     localStorage.setItem(key, JSON.stringify(value));
+    return true;
   } catch {
-    // 保存できない環境（プライベートモード等）
+    return false;
   }
 }
 
@@ -52,7 +54,7 @@ export function pickPrefs<T extends Record<string, unknown>>(
 }
 
 export const loadPrefs = (): unknown => readJson(PREFS_KEY);
-export const savePrefs = (prefs: Record<string, unknown>): void => writeJson(PREFS_KEY, prefs);
+export const savePrefs = (prefs: Record<string, unknown>): boolean => writeJson(PREFS_KEY, prefs);
 
 export function loadLibrary(): Library {
   const raw = readJson(LIBRARY_KEY);
@@ -67,7 +69,7 @@ export function loadLibrary(): Library {
   return lib;
 }
 
-export const saveLibrary = (lib: Library): void => writeJson(LIBRARY_KEY, lib);
+export const saveLibrary = (lib: Library): boolean => writeJson(LIBRARY_KEY, lib);
 
 /** 新しい順の名前一覧 */
 export const libraryNames = (lib: Library): string[] =>

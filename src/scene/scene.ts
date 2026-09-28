@@ -2,7 +2,7 @@
 // 形式: SceneData の JSON を UTF-8 → base64url。URL では `#s=<code>`、localStorage にも同じ文字列を置く。
 // v1（segs）も読み込めて、v2（shapes）に変換して返す。
 
-import { DRIFT_AMP_MAX, MAX_SEGS, MAX_SHAPE_EDGES, MIN_LINE_LEN, PLACE_BOUNDS } from '../sim/constants';
+import { BPM_MAX, BPM_MIN, DRIFT_AMP_MAX, MAX_SEGS, MAX_SHAPE_EDGES, MIN_LINE_LEN, PLACE_BOUNDS } from '../sim/constants';
 import { inferForm, isShapeEffect, isShapeForm } from '../sim/form';
 import { DEFAULT_SONG, isSongId } from '../sim/music';
 import type { Sim } from '../sim/sim';
@@ -149,7 +149,7 @@ export function validateScene(raw: unknown): SceneData | null {
   }
   return {
     v: 2,
-    bpm: clamp(Math.round(r.bpm), 40, 200),
+    bpm: clamp(Math.round(r.bpm), BPM_MIN, BPM_MAX),
     pattern: r.pattern.map((b: number) => b),
     rotate: r.rotate,
     rotationSpeed: clamp(r.rotationSpeed, 0, 2),

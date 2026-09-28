@@ -153,10 +153,6 @@ export class Input {
     this.preview.active = false;
   }
 
-  get currentTool(): Tool {
-    return this.tool;
-  }
-
   private setHover(active: boolean, x = 0, y = 0): void {
     const h = this.preview.hover;
     h.active = active;

@@ -4,7 +4,7 @@
   --pn-dim: var(--ui-dim);
   --pn-faint: rgba(var(--ui-rgb), 0.14);
   --pn-accent: var(--ui-strong);
-  position: fixed; top: var(--band, 52px); right: 12px; width: 272px; max-height: calc(100dvh - var(--band, 52px) - 12px);
+  position: fixed; top: var(--band, 52px); max-height: calc(100dvh - var(--band, 52px) - 12px);
   display: none; flex-direction: column;
   background: var(--ui-bg); border-radius: var(--ui-radius);
   backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
@@ -119,11 +119,11 @@
 .pn-note.show { opacity: 1; }
 
 /* 小窓（motion・light・sound・settings・保存）: ツールバーのボタンの真下に開く */
-.pn.pop { right: auto; width: 280px; max-width: calc(100vw - 16px); max-height: min(560px, calc(100dvh - var(--band, 52px) - 12px)); }
+.pn.pop { width: 280px; max-width: calc(100vw - 16px); max-height: min(560px, calc(100dvh - var(--band, 52px) - 12px)); }
 .pn.pop .pn-scroll { padding-top: 12px; }
 
 /* 図形のメニュー（D32）: 長押し・右クリックした場所のそばに開く。指で押しやすい高さにする */
-.pn.shape-menu { top: 0; right: auto; z-index: 20; width: auto; min-width: 190px; padding: 6px 0; }
+.pn.shape-menu { top: 0; z-index: 20; min-width: 190px; padding: 6px 0; }
 .sm-item {
   display: flex; align-items: center; gap: 12px; width: 100%; min-height: 40px; padding: 0 18px !important;
   text-align: left; color: var(--pn-dim) !important; font-size: var(--fs-l) !important;

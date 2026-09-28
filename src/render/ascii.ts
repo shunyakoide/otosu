@@ -1,6 +1,7 @@
 import { AdditiveBlending, CanvasTexture, Color, LinearFilter, Mesh, PlaneGeometry, ShaderMaterial, Vector2, Vector4 } from 'three';
 import type { BackdropLayer, LayerFrame } from './backdrop';
-import { NOISE, QUAD_VERT } from './particles';
+import { NOISE, QUAD_VERT } from './glsl';
+import { disposeMesh, HitRing } from './layer';
 
 // 背景の文字の網（D39、ascii）。画面を縦長の升目に分け、升目ごとに文字を1つ置く。
 // 文字は濃淡の場で決まる（薄い ` . : - = + * # % @` 濃い）。場はゆっくり流れるノイズと、当たった点のにじみの和。
@@ -38,7 +39,6 @@ uniform float level;
 uniform vec3 base;
 uniform vec4 hits[N];   // xy（ワールド）, 経過秒, 強さ
 uniform float hitsP[N]; // 音の高さ 0..1
-varying vec2 vUv;
 ${NOISE}
 
 void main() {
@@ -112,12 +112,7 @@ export class Ascii implements BackdropLayer {
     hits: { value: this.hitsU },
     hitsP: { value: new Array<number>(MAX_HITS).fill(0) },
   };
-  private readonly hx = new Float32Array(MAX_HITS);
-  private readonly hy = new Float32Array(MAX_HITS);
-  private readonly hAt = new Float64Array(MAX_HITS).fill(-Infinity);
-  private readonly hV = new Float32Array(MAX_HITS);
-  private readonly hPitch = new Float32Array(MAX_HITS);
-  private head = 0;
+  private readonly ring = new HitRing(MAX_HITS, HIT_SEC);
 
   constructor() {
     this.object = new Mesh(new PlaneGeometry(2, 2), new ShaderMaterial({
@@ -129,13 +124,7 @@ export class Ascii implements BackdropLayer {
   }
 
   hit(x: number, y: number, at: number, strength: number, pitch: number, _color: Color): void {
-    const i = this.head;
-    this.head = (i + 1) % MAX_HITS;
-    this.hx[i] = x;
-    this.hy[i] = y;
-    this.hAt[i] = at;
-    this.hV[i] = strength;
-    this.hPitch[i] = pitch;
+    this.ring.push(x, y, 0, at, strength, pitch);
   }
 
   update(f: LayerFrame): void {
@@ -147,17 +136,12 @@ export class Ascii implements BackdropLayer {
     this.u.time.value = f.time;
     this.u.energy.value = f.energy;
     this.u.level.value = f.level;
-    for (let i = 0; i < MAX_HITS; i++) {
-      const age = f.time - this.hAt[i]!;
-      const live = age >= 0 && age < HIT_SEC;
-      this.hitsU[i]!.set(this.hx[i]!, this.hy[i]!, live ? age : 0, live ? this.hV[i]! : 0);
-      this.u.hitsP.value[i] = this.hPitch[i]!;
-    }
+    this.ring.fill(this.hitsU, f.time);
+    for (let i = 0; i < MAX_HITS; i++) this.u.hitsP.value[i] = this.ring.pitch[i]!;
   }
 
   dispose(): void {
     this.u.atlas.value.dispose();
-    this.object.geometry.dispose();
-    (this.object.material as ShaderMaterial).dispose();
+    disposeMesh(this.object);
   }
 }

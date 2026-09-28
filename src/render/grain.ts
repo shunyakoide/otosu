@@ -2,7 +2,8 @@ import {
   AdditiveBlending, BufferAttribute, BufferGeometry, Color, Points, ShaderMaterial, Vector2, Vector4,
 } from 'three';
 import type { BackdropLayer, LayerFrame } from './backdrop';
-import { NOISE } from './particles';
+import { NOISE } from './glsl';
+import { disposeMesh, HitRing } from './layer';
 
 // 背景の粒（D35、grain）。TouchDesigner の作品「Trajectory」の、点の集まりで形を見せる描き方。
 // 粒は画面全体に散らばり、ふだんはそれぞれの場所のまわりを、粒ごとにばらばらにわずかに動く。
@@ -122,14 +123,10 @@ export class Grain implements BackdropLayer {
     hitsB: { value: this.hitsBU },
   };
 
-  private readonly hx = new Float32Array(MAX_HITS);
-  private readonly hy = new Float32Array(MAX_HITS);
-  private readonly hAt = new Float64Array(MAX_HITS).fill(-Infinity);
-  private readonly hV = new Float32Array(MAX_HITS);
-  private readonly hPitch = new Float32Array(MAX_HITS);
+  private readonly ring = new HitRing(MAX_HITS, HIT_SEC);
+  /** 当たりごとの形（< 0.5 輪 / それ以外 線）と、向き・揺らぎの乱数 */
   private readonly hForm = new Float32Array(MAX_HITS);
   private readonly hSeed = new Float32Array(MAX_HITS);
-  private head = 0;
   private cx = 0;
   private cy = 0;
   private unit = 300;
@@ -149,13 +146,7 @@ export class Grain implements BackdropLayer {
   }
 
   hit(x: number, y: number, at: number, strength: number, pitch: number, _color: Color): void {
-    const i = this.head;
-    this.head = (i + 1) % MAX_HITS;
-    this.hx[i] = (x - this.cx) / this.unit;
-    this.hy[i] = (y - this.cy) / this.unit;
-    this.hAt[i] = at;
-    this.hV[i] = Math.min(1.5, strength);
-    this.hPitch[i] = pitch;
+    const i = this.ring.push((x - this.cx) / this.unit, (y - this.cy) / this.unit, 0, at, Math.min(1.5, strength), pitch);
     this.hForm[i] = Math.random();
     this.hSeed[i] = Math.random();
   }
@@ -166,12 +157,8 @@ export class Grain implements BackdropLayer {
     this.cy = maxY / 2;
     this.unit = UNIT * Math.min(maxX - minX, maxY);
 
-    for (let i = 0; i < MAX_HITS; i++) {
-      const age = f.time - this.hAt[i]!;
-      const live = age >= 0 && age < HIT_SEC;
-      this.hitsU[i]!.set(this.hx[i]!, this.hy[i]!, live ? age : 0, live ? this.hV[i]! : 0);
-      this.hitsBU[i]!.set(this.hPitch[i]!, this.hForm[i]!, this.hSeed[i]!, 0);
-    }
+    this.ring.fill(this.hitsU, f.time);
+    for (let i = 0; i < MAX_HITS; i++) this.hitsBU[i]!.set(this.ring.pitch[i]!, this.hForm[i]!, this.hSeed[i]!, 0);
     this.u.center.value.set(this.cx, this.cy);
     this.u.unit.value = this.unit;
     this.u.extent.value.set((maxX - minX) / 2 / this.unit, maxY / 2 / this.unit);
@@ -182,7 +169,6 @@ export class Grain implements BackdropLayer {
   }
 
   dispose(): void {
-    this.object.geometry.dispose();
-    (this.object.material as ShaderMaterial).dispose();
+    disposeMesh(this.object);
   }
 }

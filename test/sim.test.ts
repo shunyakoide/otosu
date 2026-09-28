@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { driftOffset, hitAllowed, normalizePoints, segmentAngle, Sim } from '../src/sim/sim';
+import { driftOffset, hitAllowed, normalizePoints, shapeAngle, Sim } from '../src/sim/sim';
 import { formMidi, kickMidi, lengthToNote, midiAt, PROG, sectionAt, sectionRoot, sectionSteps, SONG_IDS, SONGS } from '../src/sim/music';
 import { inferForm } from '../src/sim/form';
 import { rayCapsule } from '../src/sim/collide';
@@ -106,11 +106,12 @@ describe('rotation (B1, B2, B6)', () => {
     const events = run(sim, 3);
     for (const seg of sim.segments) {
       expect(seg.omega).toBe(0);
-      const th = segmentAngle(seg, sim.step + 100);
-      expect(seg.ax).toBeCloseTo(seg.cx - Math.cos(th) * seg.halfLen, 9);
-      expect(seg.ay).toBeCloseTo(seg.cy - Math.sin(th) * seg.halfLen, 9);
-      expect(seg.bx).toBeCloseTo(seg.cx + Math.cos(th) * seg.halfLen, 9);
-      expect(seg.by).toBeCloseTo(seg.cy + Math.sin(th) * seg.halfLen, 9);
+      const th = shapeAngle(seg, sim.step + 100);
+      const halfLen = Math.hypot(seg.rbx - seg.rax, seg.rby - seg.ray) / 2;
+      expect(seg.ax).toBeCloseTo(seg.cx - Math.cos(th) * halfLen, 9);
+      expect(seg.ay).toBeCloseTo(seg.cy - Math.sin(th) * halfLen, 9);
+      expect(seg.bx).toBeCloseTo(seg.cx + Math.cos(th) * halfLen, 9);
+      expect(seg.by).toBeCloseTo(seg.cy + Math.sin(th) * halfLen, 9);
     }
     const poses = events.filter((e) => e.kind === 'shapePose');
     expect(poses.length).toBe(sim.shapes.size);
@@ -120,13 +121,14 @@ describe('rotation (B1, B2, B6)', () => {
     }
   });
 
-  it('shapeAdded carries a copy, not the live object', () => {
+  it('shapeAdded carries the drawn points relative to the centroid, unaffected by later rotation', () => {
     const sim = new Sim({ bpm: 90, pattern: [2] });
     sim.enqueue({ kind: 'addSegment', ax: 700, ay: 300, bx: 1000, by: 380 });
-    const [added] = run(sim, 1).filter((e) => e.kind === 'shapeAdded');
+    const [added] = run(sim, 1).filter((e): e is ShapeAddedEvent => e.kind === 'shapeAdded');
     sim.enqueue({ kind: 'setRotation', on: true, speed: 0.4 });
     run(sim, 10);
-    expect(added!.kind === 'shapeAdded' && added!.segments[0]!.omega).toBe(0);
+    expect(added!.points.flat().map((v) => Math.round(v * 1e6) / 1e6)).toEqual([-150, -40, 150, 40]);
+    expect(sim.shapes.get(added!.group)!.points).toEqual([[700, 300], [1000, 380]]);
   });
 
   it('uses the explicit dir for rotation direction', () => {
@@ -160,12 +162,12 @@ describe('play / stop (D50)', () => {
     run(sim, 500);
     const w0 = Math.abs(sim.segments[0]!.omega);
     sim.enqueue({ kind: 'setPlaying', on: false });
-    let prev = segmentAngle(sim.segments[0]!, sim.step);
+    let prev = shapeAngle(sim.segments[0]!, sim.step);
     let maxJump = 0;
     const speeds: number[] = [];
     for (let i = 0; i < 300; i++) {
       run(sim, 1);
-      const a = segmentAngle(sim.segments[0]!, sim.step);
+      const a = shapeAngle(sim.segments[0]!, sim.step);
       maxJump = Math.max(maxJump, Math.abs(a - prev));
       prev = a;
       speeds.push(Math.abs(sim.segments[0]!.omega));
@@ -342,9 +344,11 @@ describe('shapes (D12)', () => {
     sim.enqueue({ kind: 'addShape', points: sq, closed: true, segKind: 'line' });
     const events = run(sim, 600);
     const added = events.find((e) => e.kind === 'shapeAdded')!;
-    expect(added.kind === 'shapeAdded' && added.segments.length).toBe(4);
+    expect(added.kind === 'shapeAdded' && added.points.length).toBe(4);
     const note = lengthToNote(400).index;
-    expect(sim.segments.every((s) => s.note === note && s.group === sim.segments[0]!.group)).toBe(true);
+    expect(sim.segments.length).toBe(4);
+    expect(sim.segments.every((s) => s.group === sim.segments[0]!.group)).toBe(true);
+    expect(sim.shapes.get(sim.segments[0]!.group)!.note).toBe(note);
     expect(added.kind === 'shapeAdded' && [added.gx, added.gy, added.note]).toEqual([960, 550, note]);
     const hits = hitsOf(events);
     expect(hits.length).toBeGreaterThan(0);

@@ -1,5 +1,5 @@
-import './panel.css';
-import { placeUnder } from './panel';
+import { pad2 } from '../util';
+import { Popover } from './panel';
 import { libraryNames, type Library } from './storage';
 
 // 配置の保存・読み込み（D24）。ツールバーの保存ボタンの下に小さく開き、外を押すか選ぶと閉じる。
@@ -12,29 +12,30 @@ export type ScenesActions = {
   exportFile: () => void;
   importFile: () => void;
   copyLink: () => void;
+  /** 開くときに、保存した配置の一覧（読み直したもの）と、選ばれている名前・名前欄の名前を返す */
+  reload: () => { library: Library; current: string; name: string };
 };
 
 const shortDate = (t: number): string => {
   if (!t) return '';
   const d = new Date(t);
-  const pad = (n: number) => String(n).padStart(2, '0');
-  return `${d.getMonth() + 1}/${d.getDate()} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  return `${d.getMonth() + 1}/${d.getDate()} ${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
 };
 
-const button = (cls: string, text: string, onClick: () => void, title?: string) => {
+/** 文字だけのボタン。押した後のフォーカスは Popover が外す（残ると Space で押し直してしまう） */
+const button = (cls: string, text: string, title: string, onClick?: () => void) => {
   const b = document.createElement('button');
   b.type = 'button';
   b.className = cls;
   b.textContent = text;
-  if (title) b.title = title;
-  b.addEventListener('click', onClick);
+  b.title = title;
+  if (onClick) b.addEventListener('click', onClick);
   return b;
 };
 
-export class ScenesPopover {
-  readonly el: HTMLElement;
-  /** 閉じたとき（ツールバーの表示を戻す用） */
-  onClose: (() => void) | null = null;
+/** 外を押すと閉じる（ツールバーの保存ボタン自体は開閉に任せる）のは Popover と同じ */
+export class ScenesPopover extends Popover {
+  private readonly on: ScenesActions;
   private readonly nameInput: HTMLInputElement;
   private readonly list: HTMLElement;
   private readonly note: HTMLElement;
@@ -43,9 +44,8 @@ export class ScenesPopover {
   private current = '';
 
   constructor(parent: HTMLElement, on: ScenesActions) {
-    this.el = document.createElement('aside');
-    this.el.className = 'pn pop ui';
-
+    super(parent);
+    this.on = on;
     const row = document.createElement('div');
     row.className = 'pn-row';
     this.nameInput = document.createElement('input');
@@ -56,7 +56,7 @@ export class ScenesPopover {
       if (e.key === 'Enter') on.save(this.nameInput.value);
       if (e.key === 'Escape') this.close();
     });
-    row.append(this.nameInput, button('pn-action strong', 'save', () => on.save(this.nameInput.value)));
+    row.append(this.nameInput, button('pn-action strong', 'save', 'save this scene', () => on.save(this.nameInput.value)));
 
     this.list = document.createElement('div');
     this.list.className = 'pn-list';
@@ -74,44 +74,23 @@ export class ScenesPopover {
     const actions = document.createElement('div');
     actions.className = 'pn-actions';
     actions.append(
-      button('pn-action', 'new', () => { on.clear(); this.close(); }, 'clear all shapes (C)'),
-      button('pn-action', 'export', on.exportFile, 'download as a file'),
-      button('pn-action', 'import', () => { on.importFile(); this.close(); }, 'open a file'),
-      button('pn-action', 'copy link', on.copyLink, 'copy a URL of this scene (S)'),
+      button('pn-action', 'new', 'clear all shapes (C)', () => { on.clear(); this.close(); }),
+      button('pn-action', 'export', 'download as a file', on.exportFile),
+      button('pn-action', 'import', 'open a file', () => { on.importFile(); this.close(); }),
+      button('pn-action', 'copy link', 'copy a URL of this scene (S)', on.copyLink),
     );
     this.note = document.createElement('div');
     this.note.className = 'pn-note';
 
-    const body = document.createElement('div');
-    body.className = 'pn-scroll';
-    body.append(row, this.list, actions);
-    this.el.append(body, this.note);
-    parent.appendChild(this.el);
-
-    // 外を押したら閉じる（ツールバーの保存ボタン自体は開閉に任せる）
-    addEventListener('pointerdown', (e) => {
-      if (!this.isOpen) return;
-      const t = e.target as Node;
-      if (this.el.contains(t) || (t instanceof Element && t.closest('#toolbar'))) return;
-      this.close();
-    });
+    this.body.append(row, this.list, actions);
+    this.el.appendChild(this.note);
   }
 
-  get isOpen(): boolean {
-    return this.el.classList.contains('open');
-  }
-
-  /** anchor（保存ボタン）の真下に開く */
-  open(anchor: HTMLElement): void {
-    placeUnder(this.el, anchor);
-    this.el.classList.add('open');
-    this.render();
-  }
-
-  close(): void {
-    if (!this.isOpen) return;
-    this.el.classList.remove('open');
-    this.onClose?.();
+  /** anchor（保存ボタン）の真下に開く。開くたびに一覧を読み直す */
+  override open(anchor: HTMLElement): void {
+    const { library, current, name } = this.on.reload();
+    this.update(library, current, name);
+    super.open(anchor);
   }
 
   /** 一覧と名前欄を合わせる */
@@ -144,7 +123,8 @@ export class ScenesPopover {
       item.dataset.name = name;
       const when = document.createElement('time');
       when.textContent = shortDate(this.library[name]!.savedAt);
-      item.append(button('pn-load', name, () => {}, `load "${name}"`), when, button('pn-del', '×', () => {}, 'delete'));
+            // 押したときの処理は一覧（this.list）でまとめて受ける
+      item.append(button('pn-load', name, `load "${name}"`), when, button('pn-del', '×', 'delete'));
       return item;
     }));
   }

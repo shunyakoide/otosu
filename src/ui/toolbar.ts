@@ -1,4 +1,5 @@
 import type { Tool } from '../input/input';
+import { BPM_MAX, BPM_MIN } from '../sim/constants';
 import './toolbar.css';
 
 // 画面上端のツールバー（D24）。道具・テンポ・音量・保存だけを置き、ワールドに重ならない帯に収める。
@@ -57,12 +58,10 @@ export type ToolbarActions = {
 };
 
 /** 小窓・パネルを開くボタン */
-type PopName = 'motion' | 'light' | 'sound' | 'settings' | 'scenes';
+export type PopName = 'motion' | 'light' | 'sound' | 'settings' | 'scenes';
 
-export const TEMPO_MIN = 60;
-export const TEMPO_MAX = 140;
-export const VOLUME_MIN = -30;
-export const VOLUME_MAX = 0;
+const VOLUME_MIN = -30;
+const VOLUME_MAX = 0;
 /** 操作の案内を出しておく秒数 */
 const HELP_SEC = 12;
 /** 道具を選んだときに出す名前と音色の表示の秒数 */
@@ -114,7 +113,6 @@ export class Toolbar {
     tempo.title = 'tempo (bpm) — scroll to change';
     const nudge = (d: number) => {
       this.setTempo(this.bpm + d);
-      clearTimeout(this.tempoTimer);
       this.tempoTimer = window.setTimeout(() => on.tempo(this.bpm), 250);
     };
     btn(ICONS.minus, 'slower', () => nudge(-1), tempo);
@@ -154,6 +152,7 @@ export class Toolbar {
     sep();
     const scenesBtn: HTMLButtonElement = btn(ICONS.scenes, 'save / load scenes', () => on.scenes(scenesBtn));
     this.popBtns = { motion: motionBtn, light: lightBtn, sound: soundBtn, settings: settingsBtn, scenes: scenesBtn };
+    this.setOpenPopover(null);
     // iPhone の Safari のように全画面にできない環境ではボタンを出さない
     if (document.fullscreenEnabled) btn(ICONS.fullscreen, 'fullscreen (F)', on.fullscreen);
 
@@ -173,7 +172,12 @@ export class Toolbar {
 
   /** 道具を選んだときに、名前と音色（例: circle — kick）をツールバーの下に少しだけ出す */
   flashTool(tool: Tool): void {
-    this.tip.textContent = TOOL_LABELS[tool];
+    this.flash(TOOL_LABELS[tool]);
+  }
+
+  /** 短い知らせをツールバーの下に少しだけ出す */
+  flash(text: string): void {
+    this.tip.textContent = text;
     this.tip.style.top = `${this.el.getBoundingClientRect().bottom + 6}px`;
     this.tip.classList.remove('gone');
     clearTimeout(this.tipTimer);
@@ -195,6 +199,7 @@ export class Toolbar {
     this.muteBtn.innerHTML = muted ? ICONS.muted : ICONS.sound;
     this.muteBtn.classList.toggle('on', muted);
     this.muteBtn.title = muted ? 'unmute (M)' : 'mute (M)';
+    this.muteBtn.setAttribute('aria-label', this.muteBtn.title);
     this.el.classList.toggle('muted', muted);
   }
 
@@ -210,8 +215,10 @@ export class Toolbar {
     this.paintVolume();
   }
 
+  /** 表示を合わせる。外から（読み込み・リセット）合わせたときは、押している途中の変更を捨てる */
   setTempo(bpm: number): void {
-    this.bpm = Math.min(TEMPO_MAX, Math.max(TEMPO_MIN, Math.round(bpm)));
+    clearTimeout(this.tempoTimer);
+    this.bpm = Math.min(BPM_MAX, Math.max(BPM_MIN, Math.round(bpm)));
     this.tempoOut.textContent = String(this.bpm);
   }
 
@@ -222,7 +229,10 @@ export class Toolbar {
 
   /** 開いている小窓のボタンを光らせる（null で全部消す） */
   setOpenPopover(which: PopName | null): void {
-    for (const [k, b] of Object.entries(this.popBtns)) b.classList.toggle('on', k === which);
+    for (const [k, b] of Object.entries(this.popBtns)) {
+      b.classList.toggle('on', k === which);
+      b.setAttribute('aria-expanded', String(k === which));
+    }
   }
 
   private paintVolume(): void {

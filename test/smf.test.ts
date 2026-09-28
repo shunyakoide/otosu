@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { PPQ, writeSmf } from '../src/midi/smf';
+import { channelBits, midiVelocity, noteKey, PPQ, writeSmf } from '../src/midi/smf';
 
 function readVarLen(b: Uint8Array, i: number): [number, number] {
   let v = 0;
@@ -79,9 +79,33 @@ describe('writeSmf', () => {
     ]);
   });
 
+  it('keeps one note when the same pitch starts twice at the same tick', () => {
+    // 反響と直接の衝突が同じステップに重なったとき、1 tick で切れる音を作らない
+    const data = writeSmf(
+      [
+        { time: 0.5, duration: 0.5, note: 60, velocity: 70, channel: 1 },
+        { time: 0.5, duration: 0.5, note: 60, velocity: 90, channel: 1 },
+      ],
+      120,
+    );
+    expect(parse(data)).toEqual([
+      [480, 0x90, 60, 90],
+      [960, 0x80, 60, 0],
+    ]);
+  });
+
   it('handles long gaps (multi-byte delta)', () => {
     const data = writeSmf([{ time: 300, duration: 1, note: 48, velocity: 1, channel: 16 }], 90);
     const ev = parse(data);
     expect(ev[0]).toEqual([Math.round(300 * 1.5 * PPQ), 0x9f, 48, 1]);
+  });
+});
+
+describe('MIDI helpers', () => {
+  it('maps channel 1..16 to 0..15, keys by channel and note, and clamps velocity to 1..127', () => {
+    expect([channelBits(1), channelBits(10), channelBits(16)]).toEqual([0, 9, 15]);
+    expect(noteKey(9, 36)).toBe((9 << 7) | 36);
+    expect(noteKey(0, 60)).not.toBe(noteKey(1, 60));
+    expect([midiVelocity(0), midiVelocity(0.4 * 127), midiVelocity(200), midiVelocity(63.5)]).toEqual([1, 51, 127, 64]);
   });
 });

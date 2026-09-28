@@ -1,4 +1,4 @@
-import { WORLD_W } from './constants';
+import { beatSteps, WORLD_W } from './constants';
 
 // 音程のマッピング。audio（周波数）と render（色）の両方から使う純関数。
 
@@ -6,6 +6,10 @@ export const ROOT_MIDI = 48; // C3
 export const PENTA = [0, 2, 4, 7, 9] as const;
 /** C3〜C6 の16音 */
 export const NOTE_COUNT = 16;
+/** 一番上のスロット（15） */
+export const SLOT_MAX = NOTE_COUNT - 1;
+/** kickMidi の一番低い帯の根音（C1） */
+export const KICK_ROOT_MIDI = 24;
 
 const R_MIN = 0.03;
 const R_MAX = 0.6;
@@ -82,7 +86,7 @@ export const PROG: readonly (readonly number[])[] = SONGS.bright.scales;
 
 /** 1区間のステップ数 */
 export function sectionSteps(bpm: number, bars: number, hz: number): number {
-  return Math.max(1, Math.round((bars * 4 * hz * 60) / bpm));
+  return Math.max(1, Math.round(beatSteps(bars * 4, bpm, hz)));
 }
 
 /** 区間番号（0..PROG.length-1）。anchor 以前のステップにも対応する */
@@ -111,7 +115,7 @@ export function sectionRoot(section: number, song: SongId = DEFAULT_SONG): numbe
  */
 export function kickMidi(slot: number, section: number, song: SongId = DEFAULT_SONG): number {
   const oct = slot < 5 ? 0 : slot < 10 ? 1 : 2;
-  return 24 + 12 * oct + sectionRoot(section, song);
+  return KICK_ROOT_MIDI + 12 * oct + sectionRoot(section, song);
 }
 
 /** 形の音高: circle は kickMidi、それ以外は midiAt */
@@ -126,7 +130,7 @@ export function slotStep(form: string): number {
   return form === 'circle' ? 5 : 1;
 }
 
-/** rise の k 回目のスロット。一番上（NOTE_COUNT − 1）を超えたら -1（そこで止める） */
+/** rise の k 回目のスロット。一番上（SLOT_MAX）を超えたら -1（そこで止める） */
 export function riseSlot(form: string, slot: number, k: number): number {
   const n = slot + k * slotStep(form);
   return n < NOTE_COUNT ? n : -1;

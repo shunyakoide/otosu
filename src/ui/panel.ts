@@ -44,8 +44,12 @@ export class Section {
     // 見出しのない区切り（パネルの一番下など）は畳めない
     if (title) this.root.append(head, this.body);
     else this.root.append(this.body);
-    this.root.classList.toggle('closed', !open);
-    head.addEventListener('click', () => this.root.classList.toggle('closed'));
+    const show = (on: boolean) => {
+      this.root.classList.toggle('closed', !on);
+      head.setAttribute('aria-expanded', String(on));
+    };
+    show(open);
+    head.addEventListener('click', () => show(this.root.classList.contains('closed')));
     parent.appendChild(this.root);
   }
 
@@ -63,6 +67,7 @@ export class Section {
     input.min = String(o.min);
     input.max = String(o.max);
     input.step = String(o.step);
+    input.setAttribute('aria-label', o.label);
     const out = el('span', 'pn-value');
     const fmt = o.format ?? ((v: number) => v.toFixed(decimals(o.step)));
     const show = () => {
@@ -88,7 +93,12 @@ export class Section {
     const r = this.row(label);
     const b = el('button', 'pn-switch');
     b.type = 'button';
-    const show = () => b.classList.toggle('on', Boolean(obj[key]));
+    b.setAttribute('aria-label', label);
+    const show = () => {
+      const on = Boolean(obj[key]);
+      b.classList.toggle('on', on);
+      b.setAttribute('aria-pressed', String(on));
+    };
     b.addEventListener('click', () => {
       (obj as Obj)[key] = !obj[key];
       // これに付くつまみ（enabled）の表示も合わせる
@@ -126,7 +136,11 @@ export class Section {
           }),
         );
       }
-      opts.forEach((c, i) => box.children[i]!.classList.toggle('on', c.value === obj[key]));
+      opts.forEach((c, i) => {
+        const b = box.children[i]!;
+        b.classList.toggle('on', c.value === obj[key]);
+        b.setAttribute('aria-pressed', String(c.value === obj[key]));
+      });
     };
     show();
     this.refreshers.push(show);
@@ -138,6 +152,7 @@ export class Section {
   ): void {
     const r = this.row(label);
     const s = el('select', 'pn-select');
+    s.setAttribute('aria-label', label);
     s.addEventListener('change', () => {
       (obj as Obj)[key] = s.value;
       onChange?.(s.value);
@@ -225,9 +240,10 @@ export class Popover {
   }
 
   open(anchor: HTMLElement): void {
-    placeUnder(this.el, anchor);
     this.el.classList.add('open');
     this.refresh();
+    // 開いてから幅を測る（狭い画面では CSS の max-width で縮む）
+    placeUnder(this.el, anchor);
   }
 
   /** 値を外から変えたとき（読み込み・リセット）に表示を合わせる */
@@ -252,8 +268,9 @@ export class Panel extends Popover {
   }
 }
 
-/** anchor の真下・中央に置く（画面からはみ出さないように） */
-export function placeUnder(pop: HTMLElement, anchor: HTMLElement, width = 280): void {
+/** anchor の真下・中央に置く（画面からはみ出さないように）。pop は表示されている（幅が測れる）こと */
+function placeUnder(pop: HTMLElement, anchor: HTMLElement): void {
+  const width = pop.offsetWidth;
   const r = anchor.getBoundingClientRect();
   pop.style.left = `${Math.max(8, Math.min(innerWidth - width - 8, r.left + r.width / 2 - width / 2))}px`;
 }

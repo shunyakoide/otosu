@@ -1,5 +1,6 @@
 import { AdditiveBlending, BufferAttribute, BufferGeometry, Color, LineSegments, ShaderMaterial, Vector2, Vector3, Vector4 } from 'three';
 import type { BackdropLayer, LayerFrame } from './backdrop';
+import { disposeMesh, HitRing } from './layer';
 
 // 背景の光の膜（D33、caustics）。光線の格子を、うねる面（高さ h）の傾きで曲げ、行き着いた先に細い線を引く。
 // 線は加算で重ねるので、光が集まるところほど明るく、膜が折れ重なったところに明るい尖り（カスプ）ができる。
@@ -113,12 +114,8 @@ export class Caustics implements BackdropLayer {
     hits: { value: Array.from({ length: MAX_HITS }, () => new Vector4()) },
     hitCol: { value: Array.from({ length: MAX_HITS }, () => new Vector3()) },
   };
-  private readonly hx = new Float32Array(MAX_HITS);
-  private readonly hy = new Float32Array(MAX_HITS);
-  private readonly hAt = new Float64Array(MAX_HITS).fill(-Infinity);
-  private readonly hV = new Float32Array(MAX_HITS);
+  private readonly ring = new HitRing(MAX_HITS, WAVE_SEC);
   private readonly hCol: Color[] = Array.from({ length: MAX_HITS }, () => new Color());
-  private head = 0;
   private kick = 0;
 
   constructor() {
@@ -160,8 +157,6 @@ export class Caustics implements BackdropLayer {
 
   /** 当たった（ワールド座標、時刻は秒）。color は音の色 */
   hit(x: number, y: number, at: number, strength: number, _pitch: number, color: Color): void {
-    const i = this.head;
-    this.head = (i + 1) % MAX_HITS;
     // 格子上の位置へ（模様の中に収める）
     const c = this.u.center.value;
     const s = this.u.size.value;
@@ -172,10 +167,7 @@ export class Caustics implements BackdropLayer {
       qx *= 0.8 / l;
       qy *= 0.8 / l;
     }
-    this.hx[i] = qx;
-    this.hy[i] = qy;
-    this.hAt[i] = at;
-    this.hV[i] = strength;
+    const i = this.ring.push(qx, qy, 0, at, strength, 0);
     this.hCol[i]!.copy(color);
     this.kick = Math.min(FOLD_KICK_MAX, this.kick + FOLD_KICK * strength);
   }
@@ -195,17 +187,14 @@ export class Caustics implements BackdropLayer {
     u.fold.value = FOLD * (1 + FOLD_ENERGY * f.energy) + this.kick;
     u.level.value = f.level;
     u.base.value.copy(f.base);
+    this.ring.fill(u.hits.value, f.time);
     for (let i = 0; i < MAX_HITS; i++) {
-      const age = f.time - this.hAt[i]!;
-      const live = age >= 0 && age < WAVE_SEC;
-      u.hits.value[i]!.set(this.hx[i]!, this.hy[i]!, live ? age : 0, live ? this.hV[i]! : 0);
       const c = this.hCol[i]!;
       u.hitCol.value[i]!.set(c.r, c.g, c.b);
     }
   }
 
   dispose(): void {
-    this.object.geometry.dispose();
-    (this.object.material as ShaderMaterial).dispose();
+    disposeMesh(this.object);
   }
 }

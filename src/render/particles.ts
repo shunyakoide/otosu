@@ -4,6 +4,8 @@ import {
 } from 'three';
 import { FullScreenQuad } from 'three/addons/postprocessing/Pass.js';
 import type { BackdropLayer, LayerFrame } from './backdrop';
+import { NOISE, QUAD_VERT } from './glsl';
+import { disposeMesh, disposeQuad, HitRing } from './layer';
 
 // 背景の粒子の流れ（D34、particles）。TouchDesigner の「GPU の粒子 ＋ フィードバック」のつくり。
 // 粒子の位置は GPU のテクスチャに持ち、毎フレーム、渦を巻くノイズの流れ（curl noise）に乗せて動かす。
@@ -29,20 +31,6 @@ const ALPHA = 0.05;
 /** 覚えておく当たりの数と、効き目が消えるまで（秒） */
 const MAX_HITS = 16;
 const HIT_SEC = 2.5;
-
-export const NOISE = /* glsl */ `
-vec2 hash2(vec2 p) {
-  p = vec2(dot(p, vec2(127.1, 311.7)), dot(p, vec2(269.5, 183.3)));
-  return -1.0 + 2.0 * fract(sin(p) * 43758.5453);
-}
-float rand(vec2 p) { return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453); }
-float noise(vec2 p) {
-  vec2 i = floor(p), f = fract(p);
-  vec2 u = f * f * (3.0 - 2.0 * f);
-  return mix(mix(dot(hash2(i), f), dot(hash2(i + vec2(1.0, 0.0)), f - vec2(1.0, 0.0)), u.x),
-             mix(dot(hash2(i + vec2(0.0, 1.0)), f - vec2(0.0, 1.0)), dot(hash2(i + vec2(1.0, 1.0)), f - vec2(1.0, 1.0)), u.x), u.y);
-}
-`;
 
 // 粒子の状態: xy = 位置（範囲の半径を 1 とする）、z = 残りの寿命 1..0、w = 粒子ごとの乱数
 const SIM_FRAG = /* glsl */ `
@@ -171,10 +159,6 @@ const LINE_FRAG = /* glsl */ `
 varying vec3 vCol;
 void main() { gl_FragColor = vec4(vCol, 1.0); }`;
 
-export const QUAD_VERT = /* glsl */ `
-varying vec2 vUv;
-void main() { vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }`;
-
 // 軌跡を薄くする
 const FADE_FRAG = /* glsl */ `
 uniform sampler2D src;
@@ -242,12 +226,8 @@ export class Particles implements BackdropLayer {
   private readonly fadeQuad = new FullScreenQuad(new ShaderMaterial({ uniforms: this.fadeU, vertexShader: QUAD_VERT, fragmentShader: FADE_FRAG, blending: NoBlending }));
   private readonly showU = { trail: { value: null as Texture | null }, level: { value: 1 } };
 
-  private readonly hx = new Float32Array(MAX_HITS);
-  private readonly hy = new Float32Array(MAX_HITS);
-  private readonly hAt = new Float64Array(MAX_HITS).fill(-Infinity);
-  private readonly hV = new Float32Array(MAX_HITS);
+  private readonly ring = new HitRing(MAX_HITS, HIT_SEC);
   private readonly hCol: Color[] = Array.from({ length: MAX_HITS }, () => new Color());
-  private head = 0;
   private cx = 0;
   private cy = 0;
   private radius = 300;
@@ -283,8 +263,6 @@ export class Particles implements BackdropLayer {
   }
 
   hit(x: number, y: number, at: number, strength: number, _pitch: number, color: Color): void {
-    const i = this.head;
-    this.head = (i + 1) % MAX_HITS;
     // 流れの範囲の中の位置へ（範囲の外は縁に寄せる）
     let qx = (x - this.cx) / this.radius;
     let qy = (y - this.cy) / this.radius;
@@ -293,10 +271,7 @@ export class Particles implements BackdropLayer {
       qx /= l;
       qy /= l;
     }
-    this.hx[i] = qx;
-    this.hy[i] = qy;
-    this.hAt[i] = at;
-    this.hV[i] = strength;
+    const i = this.ring.push(qx, qy, 0, at, strength, 0);
     this.hCol[i]!.copy(color);
   }
 
@@ -307,12 +282,8 @@ export class Particles implements BackdropLayer {
     this.cy = maxY / 2;
     this.radius = RADIUS * Math.min(maxX - minX, maxY);
 
-    for (let i = 0; i < MAX_HITS; i++) {
-      const age = f.time - this.hAt[i]!;
-      const live = age >= 0 && age < HIT_SEC;
-      this.hitsU[i]!.set(this.hx[i]!, this.hy[i]!, live ? age : 0, live ? this.hV[i]! : 0);
-      this.hitColU[i]!.copy(this.hCol[i]!);
-    }
+    this.ring.fill(this.hitsU, f.time);
+    for (let i = 0; i < MAX_HITS; i++) this.hitColU[i]!.copy(this.hCol[i]!);
 
     // 軌跡のバッファは画面と同じ大きさ（CSS px）
     const size = renderer.getSize(this.size);
@@ -367,11 +338,9 @@ export class Particles implements BackdropLayer {
 
   dispose(): void {
     for (const t of [this.simA, this.simB, this.trailA, this.trailB]) t.dispose();
-    this.simQuad.dispose();
-    this.fadeQuad.dispose();
-    this.lines.geometry.dispose();
-    (this.lines.material as ShaderMaterial).dispose();
-    this.object.geometry.dispose();
-    (this.object.material as ShaderMaterial).dispose();
+    disposeQuad(this.simQuad);
+    disposeQuad(this.fadeQuad);
+    disposeMesh(this.lines);
+    disposeMesh(this.object);
   }
 }

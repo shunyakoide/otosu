@@ -30,7 +30,6 @@ export type Segment = {
   /** 辺の中点（現ステップ。1本の線なら重心と同じで動かない） */
   cx: number;
   cy: number;
-  halfLen: number;
   /** 図形の重心（固定） */
   gx: number;
   gy: number;
@@ -41,7 +40,7 @@ export type Segment = {
   rby: number;
   /**
    * この辺の向きの基準角と基準ステップ・角速度（図形内で omega と rotStartStep は共通）。
-   * segmentAngle(seg, step) はこの辺の向き。図形の回転角 φ = segmentAngle − atan2(rby−ray, rbx−rax)
+   * shapeAngle(seg, step) はこの辺の向き。図形の回転角 φ = その値 − atan2(rby−ray, rbx−rax)
    */
   theta0: number;
   rotStartStep: number;
@@ -51,19 +50,10 @@ export type Segment = {
   ay: number;
   bx: number;
   by: number;
-  length: number;
-  /** 音程スロット（図形の周長で決まる。図形内で共通・作成時に固定） */
-  note: number;
-  addedStep: number;
-  /** 未使用（クールダウンは図形単位で sim 内に持つ）。互換のため残す */
-  lastEventStep: number;
-  /** 回転の向き（図形の属性。id から導かない — B6） */
-  dir: 1 | -1;
 };
 
 export type Ball = {
   id: number;
-  emitterId: number;
   x: number;
   y: number;
   vx: number;
@@ -84,8 +74,7 @@ export type Emitter = {
   y: number;
   /** 放出間隔（拍） */
   beats: number;
-  /** 放出間隔（ステップ、整数で固定） */
-  periodSteps: number;
+  /** k 回目の放出は anchorStep + round(k 拍ぶんのステップ)（D10） */
   anchorStep: number;
   nextK: number;
 };
@@ -188,8 +177,6 @@ export type ShapeAddedEvent = {
   gx: number;
   gy: number;
   points: [number, number][];
-  /** 追加時点の各辺（コピー） */
-  segments: Segment[];
 };
 
 export type SimEvent =

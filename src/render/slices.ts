@@ -1,7 +1,8 @@
 import { AdditiveBlending, BufferAttribute, BufferGeometry, Color, DoubleSide, Mesh, ShaderMaterial, Vector2 } from 'three';
 import type { BackdropLayer, LayerFrame } from './backdrop';
-import { CubeView, ISO_PITCH, ISO_YAW, NOISE3 } from './cube';
-import { NOISE } from './particles';
+import { CubeView, ISO_PITCH, ISO_YAW } from './cube';
+import { NOISE, NOISE3 } from './glsl';
+import { disposeMesh } from './layer';
 
 // 背景の時間のスライス（D42、slices）。TouchDesigner の Texture 3D TOP（動く画像を毎フレーム貯めて、板に1枚ずつ並べる）のつくり。
 // 動く雲の画像を、手前の板には今、奥の板ほど少し前のものを映す。雲の動きが手前から隣の板へ、奥へと伝わっていく。
@@ -118,7 +119,6 @@ export class Slices implements BackdropLayer {
   }
 
   dispose(): void {
-    this.object.geometry.dispose();
-    (this.object.material as ShaderMaterial).dispose();
+    disposeMesh(this.object);
   }
 }

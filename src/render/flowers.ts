@@ -2,6 +2,7 @@ import {
   AdditiveBlending, Color, DoubleSide, DynamicDrawUsage, InstancedBufferAttribute, InstancedBufferGeometry, Mesh, PlaneGeometry, ShaderMaterial,
 } from 'three';
 import { HZ } from '../sim/constants';
+import { hash01 } from './hash';
 
 // 蔦に咲く花（D25）。見た目だけで、sim・音には関わらない。どこに咲かせるかは render.ts の蔦が決める。
 // 図形ごとに「種」（花びらの数・形・反り・開き方・色）を決め、1輪ごとに少しずつ違う花を咲かせる。
@@ -49,20 +50,8 @@ function evenLuma(c: Color, luma: number): void {
   c.multiplyScalar(Math.min(2.5, luma / Math.max(l, 0.02)));
 }
 
-/** 咲いてから消えるまでの秒数と、茎を離れて落ち始めるまでの秒数 */
-export const FLOWER_LIFE_SEC = LIFE_SEC;
+/** 咲いてから茎を離れて落ち始めるまでの秒数 */
 export const FLOWER_HOLD_SEC = HOLD_SEC;
-
-/** 見た目だけに使う決定論的な乱数 [0, 1) */
-function hash01(a: number, b: number, c: number): number {
-  let h = Math.imul(a | 0, 0x9e3779b1) ^ Math.imul((b | 0) + 0x7f4a7c15, 0x85ebca6b) ^ Math.imul((c | 0) + 0x165667b1, 0xc2b2ae35);
-  h ^= h >>> 15;
-  h = Math.imul(h, 0x2c1b3c6d);
-  h ^= h >>> 12;
-  h = Math.imul(h, 0x297a2d39);
-  h ^= h >>> 15;
-  return (h >>> 0) / 4294967296;
-}
 
 /** 花の形（1輪ごとに FORMS からランダムに選ぶ） */
 type Form = {
@@ -344,6 +333,9 @@ export class Flowers {
   /** 次に書く枠と、使ったことのある枠の数 */
   private head = 0;
   private used = 0;
+  /** リングを何周したか。枠ごとに、書いたときの周を覚える（上書きされた花の古い番号で動かさないように） */
+  private lap = 0;
+  private readonly laps = new Uint32Array(MAX_PETALS);
   /** このフレームで書いた範囲（枠番号）。送るのは次の draw で */
   private dirtyFrom = -1;
   private dirtyCount = 0;
@@ -392,12 +384,7 @@ export class Flowers {
     // 形は1輪ごとに選ぶ（同じ図形の中でも違う花が咲く）
     const sp = pick(FORMS, r(20))((j) => hash01(group, key, 40 + j));
     const n = sp.petals * (sp.layer2 > 0 ? 2 : 1) + 1;
-    if (this.head + n > MAX_PETALS) this.head = 0;
-    const start = this.head;
-    this.head += n;
-    this.used = Math.max(this.used, this.head);
-    this.count[start] = n;
-    this.markDirty(start, n);
+    const start = this.take(n);
 
     // 色: 図形の色から種ごとに色相をずらし、花ごとに少し揺らす。white モードでは色を淡く、そのぶん明るく
     const c = this.c;
@@ -435,7 +422,7 @@ export class Flowers {
       }
     }
     put(0, 2, sp.core, 0, 0, 0.1, o.gain * 0.8);
-    return start;
+    return this.handle(start);
   }
 
   /**
@@ -443,12 +430,7 @@ export class Flowers {
    * color は葉の色。返り値は setPos 用の番号
    */
   leaf(group: number, step: number, k: number, x: number, y: number, o: LeafOpts, color: Color): number {
-    if (this.head + 1 > MAX_PETALS) this.head = 0;
-    const i = this.head;
-    this.head += 1;
-    this.used = Math.max(this.used, this.head);
-    this.count[i] = 1;
-    this.markDirty(i, 1);
+    const i = this.take(1);
     const r = (j: number) => hash01(group, step * 64 + k, 500 + j);
     const dir = Math.atan2(-o.dirY, o.dirX); // 画面（y 上向き）での向き
     // 花の枠組みを流用: 軸を葉の向きへ倒し、葉は軸に垂直（平ら）に伸ばす
@@ -463,14 +445,37 @@ export class Flowers {
     this.aColor.setXYZ(i, c.r, c.g, c.b);
     c.multiplyScalar(0.45);
     this.aCore.setXYZ(i, c.r, c.g, c.b);
-    return i;
+    return this.handle(i);
+  }
+
+  /** n 枠を取る（足りなければ先頭に戻って古い花に上書きする）。返り値は先頭の枠 */
+  private take(n: number): number {
+    if (this.head + n > MAX_PETALS) {
+      this.head = 0;
+      this.lap++;
+    }
+    const start = this.head;
+    this.head += n;
+    this.used = Math.max(this.used, this.head);
+    this.count[start] = n;
+    this.laps.fill(this.lap, start, start + n);
+    this.markDirty(start, n);
+    return start;
+  }
+
+  /** 外に渡す番号: 枠と周をまとめたもの */
+  private handle(start: number): number {
+    return this.lap * MAX_PETALS + start;
   }
 
   /**
    * 咲いている花を動かす（回っている図形に付いた花用）。turn は咲いてから図形が回った角度（ワールドの向き: y 下）。
    * まとめて次の draw で送る
    */
-  setPos(flower: number, x: number, y: number, turn: number): void {
+  setPos(handle: number, x: number, y: number, turn: number): void {
+    const flower = handle % MAX_PETALS;
+    // もう別の花に上書きされていれば何もしない（書くのは先頭から順になので、先頭の枠を見れば分かる）
+    if (this.laps[flower] !== Math.floor(handle / MAX_PETALS)) return;
     const n = this.count[flower]!;
     for (let i = flower; i < flower + n; i++) {
       this.aPos.setXY(i, x, y);
@@ -497,8 +502,13 @@ export class Flowers {
     this.palettes.delete(group);
   }
 
+  /** 全部消す（花を出さない設定にしたとき。戻したときに古い花が残っていないように） */
   clear(): void {
     this.mesh.visible = false;
+    if (!this.used) return;
+    this.head = 0;
+    this.used = 0;
+    this.lap++;
   }
 
   draw(rs: number): void {

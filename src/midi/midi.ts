@@ -1,6 +1,6 @@
 import { HZ } from '../sim/constants';
 import type { HitEvent } from '../sim/types';
-import { writeSmf, type SmfNote } from './smf';
+import { channelBits, midiVelocity, noteKey, writeSmf, type SmfNote } from './smf';
 
 // ステップ3: MIDI 出力（decisions.md D10）。
 // - ライブ: Web MIDI で外部（Mac は IAC Driver → GarageBand / DAW）へ。note on は内蔵音と同じ時刻に予約送信する
@@ -65,12 +65,8 @@ export class Midi {
     this.output = (id && this.access?.outputs.get(id)) || null;
   }
 
-  get connected(): boolean {
-    return this.output !== null;
-  }
-
   private velocityOf(e: HitEvent): number {
-    return Math.min(127, Math.max(1, Math.round(e.velocity * 127)));
+    return midiVelocity(e.velocity * 127);
   }
 
   /** 送るチャンネル（1〜16）と音番号 */
@@ -97,13 +93,14 @@ export class Midi {
     const out = this.output;
     if (!out) return;
     const { channel, note } = this.route(e);
-    const ch = (channel - 1) & 0x0f;
-    const key = (ch << 7) | note;
-    const at = Math.max(performance.now(), toPerf(audioTime) + this.params.offsetMs);
+    const ch = channelBits(channel);
+    const key = noteKey(ch, note);
     const prev = this.lastOn.get(key);
-    if (prev !== undefined && prev <= at) {
+    // 同じ音はひとつ前の note on より後に置く（時計の補正で時刻が戻っても、同じ時刻に重なっても順番が崩れないように）
+    const at = Math.max(performance.now(), toPerf(audioTime) + this.params.offsetMs, prev === undefined ? 0 : prev + 2);
+    if (prev !== undefined) {
       // 同じ音が鳴っている最中の再発音: 直前で切ってから鳴らす
-      out.send([0x80 | ch, note, 0], Math.max(performance.now(), at - 1));
+      out.send([0x80 | ch, note, 0], at - 1);
     }
     out.send([0x90 | ch, note, this.velocityOf(e)], at);
     this.lastOn.set(key, at);

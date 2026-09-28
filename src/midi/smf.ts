@@ -12,6 +12,21 @@ export type SmfNote = {
 
 export const PPQ = 480;
 
+/** チャンネル 1〜16 → ステータスバイトの下位 4 bit（0〜15） */
+export function channelBits(channel: number): number {
+  return (channel - 1) & 0x0f;
+}
+
+/** (チャンネル 0〜15, 音高) ごとの鍵。同じ音の重なりを見分けるのに使う */
+export function noteKey(ch: number, note: number): number {
+  return (ch << 7) | (note & 0x7f);
+}
+
+/** velocity を 1〜127 の整数に（0 は note off になってしまうので 1 から） */
+export function midiVelocity(v: number): number {
+  return Math.min(127, Math.max(1, Math.round(v)));
+}
+
 function varLen(n: number): number[] {
   const out = [n & 0x7f];
   n >>= 7;
@@ -37,18 +52,22 @@ export function writeSmf(notes: readonly SmfNote[], bpm: number, trackName = 'ot
   const sorted = [...notes].sort((a, b) => a.time - b.time);
   const nextOn = new Map<SmfNote, number>();
   const lastByKey = new Map<number, SmfNote>();
+  const dup = new Set<SmfNote>();
   for (const n of sorted) {
-    const key = (((n.channel - 1) & 0x0f) << 7) | (n.note & 0x7f);
+    const key = noteKey(channelBits(n.channel), n.note);
     const prev = lastByKey.get(key);
-    if (prev) nextOn.set(prev, n.time);
+    // 同じ時刻に同じ音が重なったら後のほうだけ残す（先の音の note off が後の音を 1 tick で切ってしまうため）
+    if (prev && toTick(prev.time) === toTick(n.time)) dup.add(prev);
+    else if (prev) nextOn.set(prev, n.time);
     lastByKey.set(key, n);
   }
   for (const n of sorted) {
-    const ch = (n.channel - 1) & 0x0f;
+    if (dup.has(n)) continue;
+    const ch = channelBits(n.channel);
     const on = toTick(n.time);
     const end = Math.min(n.time + n.duration, nextOn.get(n) ?? Infinity);
     const off = Math.max(on + 1, toTick(end));
-    const vel = Math.min(127, Math.max(1, Math.round(n.velocity)));
+    const vel = midiVelocity(n.velocity);
     // 同じ tick では note off を先に置く（同じ音の連打で新しい音が消えないように）
     evs.push({ tick: on, order: 1, data: [0x90 | ch, n.note & 0x7f, vel] });
     evs.push({ tick: off, order: 0, data: [0x80 | ch, n.note & 0x7f, 0] });
