@@ -7,15 +7,15 @@ import { disposeMesh, HitRing } from './layer';
 // 点の大きさは、ゆっくり動く濃淡の場で決まる（濃いほど大きく、隣とつながってぼやける）。
 // 濃淡の場は、ゆっくり流れる低い周波数のノイズと、音が当たった点から広がる丸いにじみの和。
 // にじみの大きさは強さで、広がる速さは音の高さで変わる（高いほど小さく速い）。
-// 色は青の濃淡（D37 の白黒だけの例外）。薄いところは暗い紺の小さな点、濃いところは明るい水色から白へ。
+// 色は白黒の濃淡（D37）。薄いところは暗い灰の小さな点、濃いところは白へ。
 // 升目の中は同じ値なので、なめらかな場が段々の点になって見える。時刻は renderStep から取るので、止めると止まる。
 
 /** 升目の大きさ（CSS px） */
 const CELL = 11;
 /** 色の段階（薄い → 濃い）と明るさ */
-const DEEP = 0x0d2a8c;
-const MID = 0x2f7df0;
-const PALE = 0xc8e6ff;
+const DEEP = 0x303030;
+const MID = 0x9a9a9a;
+const PALE = 0xffffff;
 const ALPHA = 0.26;
 /** ノイズの模様の大きさ（見えている範囲の短いほうに対する割合）と流れる速さ */
 const SCALE = 0.45;
@@ -75,7 +75,7 @@ void main() {
   vec2 b = abs(f) - (s - rr);
   float dist = length(max(b, 0.0)) + min(max(b.x, b.y), 0.0) - rr;
   float m = 1.0 - smoothstep(-soft, soft * 0.5, dist);
-  // 濃淡: 薄いところは暗い紺、濃くなるにつれて青、明るい水色へ
+  // 濃淡: 薄いところは暗い灰、濃くなるにつれて明るい灰、白へ
   vec3 col = v < 0.6 ? mix(deep, mid, v / 0.6) : mix(mid, pale, pow((v - 0.6) / 0.4, 1.5));
   gl_FragColor = vec4(col * ${ALPHA.toFixed(3)} * (0.35 + 1.1 * v) * m * level, 1.0);
 }`;
