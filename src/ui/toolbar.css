@@ -50,6 +50,15 @@
 #toolbar-help.gone { opacity: 0; }
 #toolbar-help kbd { font: inherit; color: var(--ui-dim); }
 
+/* 右下: コードへのリンク。下の案内の文字と重ならないように、案内の右（中央寄せのものは左右）をあける */
+#source-link {
+  position: fixed; right: 16px; bottom: calc(12px + env(safe-area-inset-bottom));
+  font-size: var(--fs-s); letter-spacing: 0.06em; line-height: 1.6; color: var(--ui-faint); text-decoration: none;
+}
+#source-link:hover { color: var(--ui-text); }
+#toolbar-help { right: 72px; }
+#pointer-hint { left: 72px; right: 72px; }
+
 /* 道具を選んだときの名前と音色 */
 #toolbar-tip {
   position: fixed; left: 50%; transform: translateX(-50%);
@@ -71,7 +80,7 @@
     flex-wrap: wrap; justify-content: center; gap: 0 2px;
   }
   #toolbar i { display: none; }
-  #toolbar-help { text-align: center; }
+  #toolbar-help { left: 72px; text-align: center; }
   /* 狭いタッチ画面: 音量は本体のボタンで変えられるので、つまみを隠して 2 段に収める（D51） */
   @media (hover: none) { #toolbar .tb-volume input { display: none; } }
 }
