@@ -13,6 +13,12 @@ export const QUALITY_LEVELS: readonly QualityLevel[] = [
   { samples: 0, scale: 0.6 },
 ];
 
+/** 設定の画質（D68）。auto は重さに合わせて下げ・上げ直す。ほかは決まった段階のまま動かさない */
+export const QUALITY_MODES = ['auto', 'high', 'mid', 'low'] as const;
+export type QualityMode = (typeof QUALITY_MODES)[number];
+/** 決まった画質の段階: high = MSAA 4、mid = MSAA なし、low = それに後処理の解像度 0.75 */
+export const FIXED_LEVEL: Record<Exclude<QualityMode, 'auto'>, number> = { high: 0, mid: 1, low: 2 };
+
 /** この秒数ごとに平均のフレーム時間を見る */
 const WINDOW_SEC = 2;
 /** 平均がこれ（秒）より長ければ1段下げる（48fps 相当。60/120Hz どちらの画面でも余裕があれば超えない） */

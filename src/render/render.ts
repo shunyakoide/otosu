@@ -16,7 +16,7 @@ import { Glints } from './glints';
 import { Hud } from './hud';
 import { Notes } from './notes';
 import { noteColor, type ColorMode } from './palette';
-import { QualityGovernor, type QualityLevel } from './quality';
+import { FIXED_LEVEL, QUALITY_LEVELS, QualityGovernor, type QualityLevel, type QualityMode } from './quality';
 import { Ripples } from './ripples';
 import { Scope, type WaveSource } from './scope';
 import { arcPos } from './shape';
@@ -140,6 +140,8 @@ export class Renderer {
   /** 設定の解像度（キャンバス）と、重いときに下げる後処理の画質（D27） */
   private pixelRatio = 1;
   private readonly governor = new QualityGovernor();
+  /** 設定の画質（D68）。auto のときだけ governor が段階を動かす */
+  private qualityMode: QualityMode = 'auto';
 
   constructor(parent: HTMLElement, params: RenderParams) {
     this.params = params;
@@ -199,12 +201,25 @@ export class Renderer {
     this.renderer.setPixelRatio(r);
     this.resize();
     // 後処理も同じ解像度で描く（EffectComposer は作ったときの値を持ち続ける）。画質は測り直す
-    this.applyQuality(this.governor.reset());
+    this.applyQuality(this.startQuality());
+  }
+
+  /** 設定の画質（D68）。auto にすると最高から測り直す */
+  setQuality(mode: QualityMode): void {
+    if (mode === this.qualityMode) return;
+    this.qualityMode = mode;
+    this.applyQuality(this.startQuality());
   }
 
   /** 今の画質の段階（0 が最高） */
   get qualityLevel(): number {
-    return this.governor.level;
+    return this.qualityMode === 'auto' ? this.governor.level : FIXED_LEVEL[this.qualityMode];
+  }
+
+  /** 設定の画質で始める段階。auto なら測り直す */
+  private startQuality(): QualityLevel {
+    const auto = this.governor.reset();
+    return this.qualityMode === 'auto' ? auto : QUALITY_LEVELS[FIXED_LEVEL[this.qualityMode]]!;
   }
 
   private applyQuality(q: QualityLevel): void {
@@ -437,7 +452,7 @@ export class Renderer {
     this.gc(head);
 
     this.composer.render(dt);
-    const q = this.governor.update(dt);
+    const q = this.qualityMode === 'auto' ? this.governor.update(dt) : null;
     if (q) this.applyQuality(q);
   }
 

@@ -1,6 +1,7 @@
 import type { Audio } from '../audio/audio';
 import { BACKDROPS } from '../render/backdrop';
 import { FLOWER_KINDS, FLOWER_LABELS } from '../render/flowers';
+import { QUALITY_MODES } from '../render/quality';
 import type { Renderer } from '../render/render';
 import { SONG_IDS } from '../sim/music';
 import type { DriftMode } from '../sim/types';
@@ -156,6 +157,10 @@ function settingsPanel({ params, state, audio, renderer, ctl, midi }: PopoversDe
   setup.hint('lower it if the light comes before the sound (e.g. bluetooth)');
   setup.choice(params, 'pixelRatio', 'resolution', choices(PIXEL_RATIOS, (r) => `×${r}`), (r) => renderer.setPixelRatio(r));
   setup.hint('higher is sharper but heavier');
+  setup.choice(params, 'quality', 'quality', choices(QUALITY_MODES), (q) => renderer.setQuality(q));
+  setup.hint(() => params.quality === 'auto'
+    ? 'lowers itself when the frame rate drops, and comes back when it recovers'
+    : 'stays as it is, even when the frame rate drops');
 
   midi.fill(panel.section('MIDI', false), refresh);
 

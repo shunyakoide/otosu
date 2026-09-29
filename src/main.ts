@@ -99,6 +99,7 @@ const ctl = new Controls({ params, state, sim, audio, midi, renderer, input, too
 const store = new SceneStore({ params, state, sim, audio, toolbar, knobs, midi, refresh });
 const pops = new Popovers({ params, state, audio, renderer, knobs, ctl, midi, toolbar, scenes: store.scenes });
 renderer.setPixelRatio(params.pixelRatio);
+renderer.setQuality(params.quality);
 
 // ---- キー操作・カーソル ----
 bindShortcuts({

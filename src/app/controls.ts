@@ -111,6 +111,7 @@ export class Controls {
   applyPrefs(): void {
     const { params, state, audio, midi, renderer } = this.d;
     renderer.setPixelRatio(params.pixelRatio);
+    renderer.setQuality(params.quality);
     midi.midi.allNotesOff();
     if (!state.started) return;
     audio.setVolume(params.volume);

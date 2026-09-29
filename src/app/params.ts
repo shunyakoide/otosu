@@ -2,6 +2,7 @@ import type { Tool } from '../input/input';
 import { BACKDROPS, type BackdropKind } from '../render/backdrop';
 import { FLOWER_KINDS, type FlowerKind } from '../render/flowers';
 import type { ColorMode } from '../render/palette';
+import { QUALITY_MODES, type QualityMode } from '../render/quality';
 import { DEFAULT_SONG, type SongId } from '../sim/music';
 import type { DriftMode } from '../sim/types';
 import { loadPrefs, pickPrefs } from '../ui/storage';
@@ -57,6 +58,8 @@ export const DEFAULTS = {
   idleLine: 0.3,
   visualOffsetMs: 0,
   pixelRatio: 1 as number,
+  /** 画質（D68）。auto は重いときに自動で下げ、軽くなったら上げ直す */
+  quality: 'auto' as QualityMode,
   internalSound: true,
   midiOutput: '',
   midiChannel: 1,
@@ -78,7 +81,7 @@ export function currentPrefs(params: Params): Record<string, unknown> {
 
 /** この端末に保存されていた設定（型と選択肢が合うものだけ。配置側の値は含めない） */
 export function storedPrefs(): Partial<Params> {
-  const prefs = pickPrefs(DEFAULTS, loadPrefs(), { trail: TRAILS, pixelRatio: PIXEL_RATIOS, backdrop: BACKDROPS, flowerKind: FLOWER_KINDS });
+  const prefs = pickPrefs(DEFAULTS, loadPrefs(), { trail: TRAILS, pixelRatio: PIXEL_RATIOS, quality: QUALITY_MODES, backdrop: BACKDROPS, flowerKind: FLOWER_KINDS });
   for (const k of NOT_PREFS) delete prefs[k as keyof Params];
   return prefs;
 }
