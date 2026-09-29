@@ -21,6 +21,9 @@ export type SliderOpts = {
 
 export type Choice<V> = { value: V; label?: string };
 
+/** chips の1つ: オン・オフする値のキー・表示名・触ったときに出す説明 */
+export type Chip<K extends string> = { key: K; label: string; hint: string };
+
 const el = <K extends keyof HTMLElementTagNameMap>(tag: K, cls?: string, text?: string) => {
   const e = document.createElement(tag);
   if (cls) e.className = cls;
@@ -34,6 +37,8 @@ export class Section {
   readonly root: HTMLElement;
   readonly body: HTMLElement;
   private readonly refreshers: (() => void)[];
+  /** 最後に足した行（showIf の対象） */
+  private last: HTMLElement | null = null;
 
   constructor(parent: HTMLElement, title: string, open: boolean, refreshers: (() => void)[]) {
     this.refreshers = refreshers;
@@ -57,7 +62,49 @@ export class Section {
     const r = el('div', 'pn-row');
     r.appendChild(el('span', 'pn-label', label));
     this.body.appendChild(r);
+    this.last = r;
     return r;
+  }
+
+  /** 直前の行を、when() が true のときだけ出す（drip がオンのときの speed など） */
+  showIf(when: () => boolean): void {
+    const r = this.last;
+    if (r) this.onRefresh(() => { r.hidden = !when(); });
+  }
+
+  /**
+   * オン・オフを並べたボタン（D63）。スイッチの行を積むより短く収まる。
+   * 説明は下の1行にまとめ、触った（マウスを載せた・押した）ものの説明を出す。何も触っていなければ fallback
+   */
+  chips<T extends Obj, K extends keyof T & string>(obj: T, items: readonly Chip<K>[], fallback: string): void {
+    const box = el('div', 'pn-chips');
+    const hint = el('div', 'pn-hint');
+    let picked: Chip<K> | null = null;
+    const say = (c: Chip<K> | null) => { hint.textContent = c?.hint ?? fallback; };
+    const buttons = items.map((c) => {
+      const b = el('button', 'pn-chip', c.label);
+      b.type = 'button';
+      b.addEventListener('click', () => {
+        (obj as Obj)[c.key] = !obj[c.key];
+        picked = c;
+        say(c);
+        for (const fn of this.refreshers) fn();
+      });
+      b.addEventListener('pointerenter', (e) => { if (e.pointerType === 'mouse') say(c); });
+      b.addEventListener('pointerleave', (e) => { if (e.pointerType === 'mouse') say(picked); });
+      box.appendChild(b);
+      return b;
+    });
+    this.body.append(box, hint);
+    this.last = box;
+    say(null);
+    this.onRefresh(() => {
+      items.forEach((c, i) => {
+        const on = Boolean(obj[c.key]);
+        buttons[i]!.classList.toggle('on', on);
+        buttons[i]!.setAttribute('aria-pressed', String(on));
+      });
+    });
   }
 
   slider<T extends Obj>(obj: T, key: keyof T & string, o: SliderOpts): void {

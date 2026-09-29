@@ -101,23 +101,21 @@ function lightPopover({ params }: PopoversDeps): Popover {
   // blur のときは残像の長さが決まっている（render の LEGACY_DAMP）ので薄くする
   l.slider(params, 'afterimage', { label: 'trail', min: 0.7, max: 0.97, step: 0.005, format: (v) => v.toFixed(2), enabled: () => params.trail === 'geometry' });
   l.hint(() => params.trail === 'geometry' ? 'balls draw a tail; this sets how long' : 'no tail, the screen keeps a short blur');
+  // 当たったときに出るもの: スイッチの行を積むと長くなったので、並べたボタン1行にまとめる（D63）
   const h = pop.section('on hit');
-  h.toggle(params, 'drip', 'drip');
-  h.slider(params, 'dripSpeed', { label: 'speed', min: 10, max: 300, step: 5, format: (v) => `${v}`, enabled: () => params.drip });
-  h.hint('light runs down from the shape that was hit');
-  h.toggle(params, 'flowers', 'flowers');
-  h.choice(params, 'flowerKind', 'kind', choices(FLOWER_KINDS, (k) => FLOWER_LABELS[k] ?? k));
-  h.hint('a vine grows from the hit and blooms');
-  h.toggle(params, 'hud', 'readout');
-  h.hint('a small frame and coordinates flash where the ball hit');
-  h.toggle(params, 'crosshair', 'crosshair');
-  h.hint('lines reach out to the edges from the hit');
-  h.toggle(params, 'noteNames', 'notes');
-  h.hint('the name of the note floats up from the hit');
-  h.toggle(params, 'scope', 'scope');
-  h.hint('the sound\'s waveform stretches out from the hit');
-  h.toggle(params, 'constellation', 'stars');
-  h.hint('hits stay as stars, joined in a row; they clear every 8 bars');
+  h.chips(params, [
+    { key: 'drip', label: 'drip', hint: 'light runs down from the shape that was hit' },
+    { key: 'flowers', label: 'flowers', hint: 'a vine grows from the hit and blooms' },
+    { key: 'hud', label: 'readout', hint: 'a small frame and coordinates flash where the ball hit' },
+    { key: 'crosshair', label: 'crosshair', hint: 'lines reach out to the edges from the hit' },
+    { key: 'noteNames', label: 'notes', hint: 'the name of the note floats up from the hit' },
+    { key: 'scope', label: 'scope', hint: 'the sound\'s waveform stretches out from the hit' },
+    { key: 'constellation', label: 'stars', hint: 'hits stay as stars, joined in a row; they clear every 8 bars' },
+  ], 'turn on what shows up where a ball hits');
+  h.slider(params, 'dripSpeed', { label: 'drip speed', min: 10, max: 300, step: 5, format: (v) => `${v}` });
+  h.showIf(() => params.drip);
+  h.choice(params, 'flowerKind', 'flowers', choices(FLOWER_KINDS, (k) => FLOWER_LABELS[k] ?? k));
+  h.showIf(() => params.flowers);
   const b = pop.section('backdrop');
   b.choice(params, 'backdrop', 'kind', () => BACKDROPS.map((value) => ({ value })));
   b.slider(params, 'backdropLevel', { label: 'level', min: 0.2, max: 2, step: 0.05, format: (v) => v.toFixed(2), enabled: () => params.backdrop !== 'none' });

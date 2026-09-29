@@ -82,6 +82,17 @@
   border-radius: 50%; background: currentColor;
 }
 
+/* オン・オフを並べたボタン（D63）: 選択肢と同じ見た目で、いくつでもオンにできる */
+.pn-chips { display: flex; flex-wrap: wrap; gap: 4px 14px; padding: 4px 0 6px; }
+.pn-chip { position: relative; padding: 3px 0; color: var(--pn-dim); }
+.pn-chip:hover { color: var(--pn-text); }
+.pn-chip.on { color: var(--pn-accent); }
+.pn-chip.on::after {
+  content: ''; position: absolute; left: 50%; bottom: -1px; width: 3px; height: 3px; margin-left: -1.5px;
+  border-radius: 50%; background: currentColor;
+}
+.pn-row[hidden] { display: none; }
+
 .pn-select, .pn-input {
   flex: 1; min-width: 0; height: 24px; padding: 0 2px; font: inherit; color: var(--pn-text);
   background: none; border: 0; border-bottom: 1px solid var(--pn-faint); border-radius: 0; outline: none;
