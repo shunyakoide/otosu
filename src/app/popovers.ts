@@ -98,12 +98,14 @@ function lightPopover({ params }: PopoversDeps): Popover {
   l.slider(params, 'idleLine', { label: 'at rest', min: 0.15, max: 0.45, step: 0.01 });
   l.hint('how bright shapes are between hits');
   l.choice(params, 'trail', 'trail style', choices(TRAILS, (t) => TRAIL_LABELS[t]));
-  // blur のときは残像の長さが決まっている（render の LEGACY_DAMP）ので薄くする
-  l.slider(params, 'afterimage', { label: 'trail', min: 0.7, max: 0.97, step: 0.005, format: (v) => v.toFixed(2), enabled: () => params.trail === 'geometry' });
-  l.hint(() => params.trail === 'geometry' ? 'balls draw a tail; this sets how long' : 'no tail, the screen keeps a short blur');
+  l.hint(() => params.trail === 'geometry' ? 'balls draw a tail' : 'no tail, the screen keeps a short blur');
+  // blur のときは残像の長さが決まっている（render の LEGACY_DAMP）ので出さない（D64）
+  l.slider(params, 'afterimage', { label: 'tail', min: 0.7, max: 0.97, step: 0.005, format: (v) => v.toFixed(2) });
+  l.showIf(() => params.trail === 'geometry');
+  l.hint('how long the tail is');
   // 当たったときに出るもの: スイッチの行を積むと長くなったので、並べたボタン1行にまとめる（D63）
   const h = pop.section('on hit');
-  h.chips(params, [
+  h.chips(params, 'show', [
     { key: 'drip', label: 'drip', hint: 'light runs down from the shape that was hit' },
     { key: 'flowers', label: 'flowers', hint: 'a vine grows from the hit and blooms' },
     { key: 'hud', label: 'readout', hint: 'a small frame and coordinates flash where the ball hit' },
@@ -118,7 +120,8 @@ function lightPopover({ params }: PopoversDeps): Popover {
   h.showIf(() => params.flowers);
   const b = pop.section('backdrop');
   b.choice(params, 'backdrop', 'kind', () => BACKDROPS.map((value) => ({ value })));
-  b.slider(params, 'backdropLevel', { label: 'level', min: 0.2, max: 2, step: 0.05, format: (v) => v.toFixed(2), enabled: () => params.backdrop !== 'none' });
+  b.slider(params, 'backdropLevel', { label: 'level', min: 0.2, max: 2, step: 0.05, format: (v) => v.toFixed(2) });
+  b.showIf(() => params.backdrop !== 'none');
   return pop;
 }
 
@@ -135,10 +138,11 @@ function soundPopover({ params, state, audio, ctl }: PopoversDeps): Popover {
   m.choice(params, 'song', 'song', choices(SONG_IDS), () => ctl.setSong());
   m.hint('changes the chords of every sound, shapes included');
   m.toggle(params, 'pad', 'hum', (on) => state.started && audio.setPad(on));
-  m.slider(params, 'padLevel', {
-    label: 'hum vol', min: 0, max: 1, step: 0.01, enabled: () => params.pad, onInput: (v) => state.started && audio.setPadLevel(v),
-  });
   m.hint('a soft tone that keeps playing the song\'s chord in the background');
+  m.slider(params, 'padLevel', {
+    label: 'hum vol', min: 0, max: 1, step: 0.01, onInput: (v) => state.started && audio.setPadLevel(v),
+  });
+  m.showIf(() => params.pad);
   return pop;
 }
 

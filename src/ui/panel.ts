@@ -15,8 +15,6 @@ export type SliderOpts = {
   onInput?: (v: number) => void;
   /** 離したとき */
   onChange?: (v: number) => void;
-  /** false のあいだ薄くする（drip がオフのときの drip speed など） */
-  enabled?: () => boolean;
 };
 
 export type Choice<V> = { value: V; label?: string };
@@ -37,8 +35,14 @@ export class Section {
   readonly root: HTMLElement;
   readonly body: HTMLElement;
   private readonly refreshers: (() => void)[];
-  /** 最後に足した行（showIf の対象） */
+  /** 最後に足した行（showIf・hint の対象） */
   private last: HTMLElement | null = null;
+  /** 説明の1行（D64）。区切りの一番下に置き、触った行の説明を出す。hint を初めて呼んだときに作る */
+  private line: HTMLElement | null = null;
+  /** 説明のある行と、その説明。picked = 最後に触った行（初めは最初の行） */
+  private readonly hints = new Map<HTMLElement, () => string>();
+  private picked: HTMLElement | null = null;
+  private hovered: HTMLElement | null = null;
 
   constructor(parent: HTMLElement, title: string, open: boolean, refreshers: (() => void)[]) {
     this.refreshers = refreshers;
@@ -63,6 +67,8 @@ export class Section {
     r.appendChild(el('span', 'pn-label', label));
     this.body.appendChild(r);
     this.last = r;
+    // 説明の1行はいつも一番下に
+    if (this.line) this.body.appendChild(this.line);
     return r;
   }
 
@@ -76,8 +82,10 @@ export class Section {
    * オン・オフを並べたボタン（D63）。スイッチの行を積むより短く収まる。
    * 説明は下の1行にまとめ、触った（マウスを載せた・押した）ものの説明を出す。何も触っていなければ fallback
    */
-  chips<T extends Obj, K extends keyof T & string>(obj: T, items: readonly Chip<K>[], fallback: string): void {
+  chips<T extends Obj, K extends keyof T & string>(obj: T, label: string, items: readonly Chip<K>[], fallback: string): void {
+    const r = this.row(label);
     const box = el('div', 'pn-chips');
+    r.appendChild(box);
     const hint = el('div', 'pn-hint');
     let picked: Chip<K> | null = null;
     const say = (c: Chip<K> | null) => { hint.textContent = c?.hint ?? fallback; };
@@ -95,8 +103,7 @@ export class Section {
       box.appendChild(b);
       return b;
     });
-    this.body.append(box, hint);
-    this.last = box;
+    this.body.appendChild(hint);
     say(null);
     this.onRefresh(() => {
       items.forEach((c, i) => {
@@ -122,7 +129,6 @@ export class Section {
       input.value = String(v);
       input.style.setProperty('--p', `${((v - o.min) / (o.max - o.min)) * 100}%`);
       out.textContent = fmt(v);
-      if (o.enabled) r.classList.toggle('off', !o.enabled());
     };
     input.addEventListener('input', () => {
       (obj as Obj)[key] = Number(input.value);
@@ -148,7 +154,7 @@ export class Section {
     };
     b.addEventListener('click', () => {
       (obj as Obj)[key] = !obj[key];
-      // これに付くつまみ（enabled）の表示も合わせる
+      // これに付くつまみ（showIf）の表示も合わせる
       for (const fn of this.refreshers) fn();
       onChange?.(obj[key] as boolean);
     });
@@ -238,11 +244,48 @@ export class Section {
     this.row(label).appendChild(el('span', 'pn-info', text));
   }
 
-  /** 直前の行の下に出す小さな説明。選んでいる値で変えるときは関数で渡す */
+  /**
+   * 直前の行の説明（D64）。行ごとには出さず、区切りの一番下の1行にまとめる。
+   * マウスを載せた行の説明を出し、離れたら最後に触った（押した・動かした）行の説明に戻す。
+   * 何も触っていなければ最初の行の説明。選んでいる値で変えるときは関数で渡す
+   */
   hint(text: string | (() => string)): void {
-    const h = el('div', 'pn-hint');
-    this.body.appendChild(h);
-    this.onRefresh(() => { h.textContent = typeof text === 'string' ? text : text(); });
+    const r = this.last;
+    if (!r) return;
+    const get = typeof text === 'string' ? () => text : text;
+    if (!this.line) {
+      this.line = el('div', 'pn-hint pn-line');
+      this.body.appendChild(this.line);
+      this.onRefresh(() => this.say());
+    }
+    this.hints.set(r, get);
+    this.picked ??= r;
+    r.addEventListener('pointerenter', (e) => {
+      if (e.pointerType !== 'mouse') return;
+      this.hovered = r;
+      this.say();
+    });
+    r.addEventListener('pointerleave', (e) => {
+      if (e.pointerType !== 'mouse') return;
+      this.hovered = null;
+      this.say();
+    });
+    // 押した・動かした行を覚える（タッチではこれで説明が変わる）
+    const pick = () => {
+      this.picked = r;
+      this.say();
+    };
+    r.addEventListener('pointerdown', pick);
+    r.addEventListener('input', pick);
+    this.say();
+  }
+
+  /** 説明の1行を合わせる。説明の出ている行の見出しを明るくする */
+  private say(): void {
+    if (!this.line) return;
+    const r = this.hovered ?? this.picked;
+    this.line.textContent = (r && this.hints.get(r)?.()) ?? '';
+    for (const row of this.hints.keys()) row.classList.toggle('hinted', row === r && this.hints.size > 1);
   }
 
   /** 表示を合わせる処理を足す（自前の要素用） */

@@ -38,12 +38,13 @@
   padding: 10px 0 4px; font-size: var(--fs-s); letter-spacing: 0.22em; text-transform: uppercase; color: var(--ui-faint);
 }
 .pn.pop .pn-section:first-child .pn-sub { padding-top: 0; }
-/* 前の項目がオフのとき、それに付くつまみを薄くする */
-.pn-row.off { opacity: 0.35; }
 
 .pn-row { display: flex; align-items: center; gap: 10px; min-height: 26px; }
 .pn-label { flex: 0 0 72px; color: var(--pn-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .pn-value { flex: 0 0 44px; white-space: nowrap; text-align: right; font-variant-numeric: tabular-nums; color: var(--pn-text); }
+/* 区切りの説明の1行（D64）と、いま説明している行の見出し */
+.pn-hint.pn-line { margin: 4px 0 2px; min-height: 1.5em; }
+.pn-row.hinted .pn-label { color: var(--pn-text); }
 
 /* スライダー: 細い線と小さな丸。左側だけ明るくする */
 .pn-range {
@@ -83,7 +84,7 @@
 }
 
 /* オン・オフを並べたボタン（D63）: 選択肢と同じ見た目で、いくつでもオンにできる */
-.pn-chips { display: flex; flex-wrap: wrap; gap: 4px 14px; padding: 4px 0 6px; }
+.pn-chips { display: flex; flex-wrap: wrap; gap: 2px 11px; flex: 1; }
 .pn-chip { position: relative; padding: 3px 0; color: var(--pn-dim); }
 .pn-chip:hover { color: var(--pn-text); }
 .pn-chip.on { color: var(--pn-accent); }
