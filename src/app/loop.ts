@@ -12,7 +12,8 @@ import type { EngineState } from './state';
 // 時計は AudioContext の1本（decisions.md D3, D8）。
 // sim は LOOKAHEAD ぶん先行し、音は t0 + step/HZ に予約、描画は「今聴こえている時刻」の世界を表示する。
 
-const LOOKAHEAD = 0.05;
+/** 音を予約する先行時間（秒）。出力のまとまり（'playback' で数十 ms）より十分長く（D58） */
+const LOOKAHEAD = 0.1;
 const MAX_STEPS_PER_FRAME = 8;
 const MAX_LAG = 0.1;
 const LATE_DROP = 0.02;
@@ -29,7 +30,7 @@ export type LoopDeps = {
 };
 
 /** ?fps: 実機で重さを確かめるための表示（fps と画質の段階。D27） */
-function fpsMeter(renderer: Renderer): ((now: number) => void) | null {
+function fpsMeter(renderer: Renderer, audio: Audio): ((now: number) => void) | null {
   if (!new URLSearchParams(location.search).has('fps')) return null;
   const el = document.body.appendChild(document.createElement('div'));
   el.style.cssText = 'position:fixed;right:8px;bottom:8px;font:11px monospace;color:#8f8;pointer-events:none;z-index:9';
@@ -37,7 +38,8 @@ function fpsMeter(renderer: Renderer): ((now: number) => void) | null {
   let t = performance.now();
   return (now) => {
     if (++frames && now - t >= 1000) {
-      el.textContent = `${Math.round((frames * 1000) / (now - t))} fps · q${renderer.qualityLevel}`;
+      const ms = (sec = 0) => Math.round(sec * 1000);
+      el.textContent = `${Math.round((frames * 1000) / (now - t))} fps · q${renderer.qualityLevel} · audio ${ms(audio.raw.baseLatency)}/${ms(audio.raw.outputLatency)}ms`;
       frames = 0;
       t = now;
     }
@@ -47,7 +49,7 @@ function fpsMeter(renderer: Renderer): ((now: number) => void) | null {
 export function startLoop({ params, state, sim, audio, midi, renderer, input, clock }: LoopDeps): void {
   // 音の時計（D29）: getOutputTimestamp は音声スレッドを待って固まることがあるので使わない
   const toPerf = (audioTime: number): number => clock.toPerf(audioTime);
-  const fps = fpsMeter(renderer);
+  const fps = fpsMeter(renderer, audio);
   let lastFrame = performance.now();
 
   function frame(now: number): void {

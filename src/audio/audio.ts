@@ -43,6 +43,14 @@ const CONFIRM_DB = -7;
 /** 確定音の音域の幅（半音）。一番上のスロットの音高 − ROOT_MIDI = 36（C3 … C6） */
 const CONFIRM_SPAN = noteFromIndex(SLOT_MAX).midi - ROOT_MIDI;
 
+function latencyHintFromUrl(): AudioContextLatencyCategory | number | undefined {
+  const v = new URLSearchParams(location.search).get('latency');
+  if (!v) return undefined;
+  if (v === 'interactive' || v === 'balanced' || v === 'playback') return v;
+  const sec = Number(v);
+  return sec > 0 ? sec : undefined;
+}
+
 export class Audio {
   private voices: Pool<FmVoice> = emptyPool();
   private penVoices: Pool<FmVoice> = emptyPool();
@@ -84,7 +92,10 @@ export class Audio {
   private static native: AudioContext;
 
   static setupContext(): void {
-    Audio.native = new AudioContext({ latencyHint: 'interactive' });
+    // 'playback': 音声の処理のまとまりを大きくして、描画が重いときに音が途切れ（ブツッ）にくくする（D58）。
+    // 遅れは開始時に読んで描画・MIDI の時刻合わせに入れている（D29）
+    // ?latency=0.05（秒）や ?latency=interactive で実機の途切れを比べられるようにする
+    Audio.native = new AudioContext({ latencyHint: latencyHintFromUrl() ?? 'playback' });
     const ctx = new Tone.Context({
       // Tone の型は互換ラッパーの AudioContext を要求するが、実行時はネイティブも受け付ける
       context: Audio.native as never,
