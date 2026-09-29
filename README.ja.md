@@ -110,11 +110,7 @@ Vite + TypeScript + three.js + Tone.js で作っています。物理（ボー�
 
 ## ドキュメント
 
-設計の経緯を日本語で残しています。
-
-- [docs/concept.md](docs/concept.md) — コンセプト、最初に決めたこと、ロードマップ
-- [docs/design/decisions.md](docs/design/decisions.md) — 設計判断の記録（D1〜）。ほかの文書と食い違うときはここが優先
-- [docs/design/](docs/design/) — 初期（ステップ1・2）の設計案。音・描画・物理とアーキテクチャに分けて書いた
+[docs/design/decisions.md](docs/design/decisions.md) に設計判断の記録（D1〜）を残しています。コードのコメントは `（D55）` のように番号でここを指しています。
 
 ## ライセンス
 

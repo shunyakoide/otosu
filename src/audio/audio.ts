@@ -10,8 +10,8 @@ import {
 import { Pad } from './pad';
 import { emptyPool, freeSlot, makePool, pickSlot, type Pool } from './voicePool';
 
-// 音色: ガラス／マレット系の減衰音＋深めのリバーブ（docs/design/audio.md）。
-// ステップ2: 自前ボイスプールで音域ごとの音色とステレオ定位（docs/design/step2-audio.md 案2・案3）。
+// 音色: ガラス／マレット系の減衰音＋深めのリバーブ。
+// ステップ2: 自前ボイスプールで音域ごとの音色とステレオ定位。
 // ステップ4: 確定音・ティック・パッド・energy による盛り上がり・バンパーの音色・ミュート（decisions.md D11, D15）。
 // ステップ5: 図形の形ごとの楽器（decisions.md D16）。line = ベル、pen = カリンバ、circle = キック〜タム、
 //            triangle = チャイム／シンギングボウル、square = ウッドブロック。確定音も形の音色で鳴らす。

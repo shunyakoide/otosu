@@ -110,11 +110,7 @@ Line colors stay the same; only the pitches move. Your layout and settings are s
 
 ## Documentation
 
-The design history is written in Japanese.
-
-- [docs/concept.md](docs/concept.md) — concept, initial decisions, roadmap
-- [docs/design/decisions.md](docs/design/decisions.md) — log of design decisions (D1 onward). It takes precedence when documents disagree
-- [docs/design/](docs/design/) — early design proposals (steps 1 and 2), split into audio, visuals, and physics/architecture
+[docs/design/decisions.md](docs/design/decisions.md) is the log of design decisions (D1 onward), written in Japanese. Code comments refer to it by number, e.g. `(D55)`.
 
 ## License
 
