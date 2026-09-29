@@ -658,6 +658,29 @@ describe('emission timing (D10)', () => {
       expect(Math.abs(step - (k * 2 * 7200) / 97)).toBeLessThanOrEqual(0.5);
     });
   });
+
+  it('skipFirstDrop leaves out only step 0 and keeps the grid (D61)', () => {
+    const sim = new Sim({ bpm: 90, pattern: [2, 3], drift: { mode: 'off', amp: 0 }, skipFirstDrop: true });
+    const emits: [number, number][] = [];
+    for (let i = 0; i < 480; i++) {
+      sim.advance();
+      for (const e of sim.drainEvents()) if (e.kind === 'emit') emits.push([e.emitterId, e.step]);
+    }
+    // 90 BPM = 80 ステップ/拍。2 拍ごと・3 拍ごとの格子のうち step 0 だけが抜ける
+    expect(emits).toEqual([[0, 160], [1, 240], [0, 320]]);
+  });
+
+  it('marks shapes placed by loading so they do not play the confirm sound (D61)', () => {
+    const sim = new Sim({ bpm: 90, pattern: [2] });
+    sim.enqueue({ kind: 'addSegment', ax: 100, ay: 100, bx: 300, by: 100, loaded: true });
+    sim.enqueue({ kind: 'addShape', points: polygon(500, 500, 60, 3), closed: true, segKind: 'line' });
+    sim.advance();
+    const scene = sceneFromSim(sim);
+    sim.enqueue({ kind: 'loadScene', scene });
+    sim.advance();
+    const added = sim.drainEvents().filter((e): e is ShapeAddedEvent => e.kind === 'shapeAdded').map((e) => e.loaded);
+    expect(added).toEqual([true, false, true, true]);
+  });
 });
 
 describe('forms (D16)', () => {

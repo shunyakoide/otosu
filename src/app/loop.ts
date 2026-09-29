@@ -87,8 +87,8 @@ export function startLoop({ params, state, sim, audio, midi, renderer, input, cl
       } else if (e.kind === 'section') {
         audio.setSection(e.root, Math.max(time, ct));
       } else if (e.kind === 'shapeAdded') {
-        // 確定音（D11: 入力へのフィードバック。MIDI には送らない）
-        if (params.internalSound && time >= ct - LATE_DROP) audio.confirm(e.midi, Math.max(time, ct), e.form);
+        // 確定音（D11: 入力へのフィードバック。MIDI には送らない）。読み込みで置いた図形は鳴らさない（D61）
+        if (params.internalSound && !e.loaded && time >= ct - LATE_DROP) audio.confirm(e.midi, Math.max(time, ct), e.form);
       }
       kept.push(e);
     }

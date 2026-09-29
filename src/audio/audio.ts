@@ -26,7 +26,7 @@ import { emptyPool, freeSlot, makePool, pickSlot, type Pool } from './voicePool'
 //   確定音 ×2（line）───────────────────────────────────────────────────────────────→ reverb
 //   パッド A/B（根音＋5度）→ padFilter → padGain ─────────────────────────────────────→ reverb
 //   ティック ─────────────────────────────────────────────────────────────────────────────────→ master
-//   master（ミュート）→ Compressor → Limiter → Destination
+//   master（ミュート）→ Compressor → makeup（+MAKEUP_DB）→ Limiter → Destination
 
 /** energy の平滑化の時定数（秒）と、エフェクトのパラメータを書き換える最小間隔 */
 const ENERGY_TAU = 3;
@@ -42,6 +42,12 @@ const PLAY_FADE_SEC = 0.6;
 const CONFIRM_DB = -7;
 /** 確定音の音域の幅（半音）。一番上のスロットの音高 − ROOT_MIDI = 36（C3 … C6） */
 const CONFIRM_SPAN = noteFromIndex(SLOT_MAX).midi - ROOT_MIDI;
+
+/**
+ * コンプの後で持ち上げる量。声部ごとの音量は小さめに揃えてあり、そのままだとピークが -24dBFS ほどで
+ * イヤホン・PC では小さすぎた。重なって大きくなったぶんはコンプとリミッター（-1dB）で抑える
+ */
+const MAKEUP_DB = 12;
 
 function latencyHintFromUrl(): AudioContextLatencyCategory | number | undefined {
   const v = new URLSearchParams(location.search).get('latency');
@@ -135,8 +141,9 @@ export class Audio {
     const reverb = new Tone.Reverb({ decay: 6, preDelay: 0.03, wet: 0.35 });
     this.master = new Tone.Gain(this.level());
     const comp = new Tone.Compressor({ threshold: -20, ratio: 3, attack: 0.01, release: 0.25 });
+    const makeup = new Tone.Gain(MAKEUP_DB, 'decibels');
     const limiter = new Tone.Limiter(-1);
-    hitBus.chain(highpass, this.brightness, this.delay, reverb, this.master, comp, limiter, Tone.getDestination());
+    hitBus.chain(highpass, this.brightness, this.delay, reverb, this.master, comp, makeup, limiter, Tone.getDestination());
     Tone.getDestination().volume.value = -3;
 
     this.penVoices = makePool(PEN_VOICES, () => makePenVoice(hitBus));

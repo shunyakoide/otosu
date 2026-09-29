@@ -16,11 +16,11 @@ import { download, stamp } from '../util';
 
 /** 保存された配置がないときに置く線 */
 export const DEMO: Command[] = [
-  { kind: 'addSegment', ax: 700, ay: 300, bx: 900, by: 360 },
-  { kind: 'addSegment', ax: 1050, ay: 420, bx: 1250, by: 380 },
-  { kind: 'addSegment', ax: 500, ay: 640, bx: 1000, by: 700 },
-  { kind: 'addSegment', ax: 1150, ay: 700, bx: 1450, by: 620 },
-  { kind: 'addSegment', ax: 820, ay: 950, bx: 980, by: 900 },
+  { kind: 'addSegment', ax: 700, ay: 300, bx: 900, by: 360, loaded: true },
+  { kind: 'addSegment', ax: 1050, ay: 420, bx: 1250, by: 380, loaded: true },
+  { kind: 'addSegment', ax: 500, ay: 640, bx: 1000, by: 700, loaded: true },
+  { kind: 'addSegment', ax: 1150, ay: 700, bx: 1450, by: 620, loaded: true },
+  { kind: 'addSegment', ax: 820, ay: 950, bx: 980, by: 900, loaded: true },
 ];
 
 /** 自動保存の間隔（ms） */

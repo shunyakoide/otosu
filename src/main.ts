@@ -34,6 +34,7 @@ const sim = new Sim({
   pattern: PATTERNS[params.pattern]!,
   drift: { mode: params.drift, amp: params.driftAmp },
   song: params.song,
+  skipFirstDrop: true,
 });
 if (stored) sim.enqueue({ kind: 'loadScene', scene: stored });
 else for (const c of DEMO) sim.enqueue(c);

@@ -36,6 +36,11 @@ export type SimOptions = {
   drift?: { mode: DriftMode; amp: number };
   /** 曲（D48）。省略時は bright */
   song?: SongId;
+  /**
+   * step 0 の放出を出さない。始めた瞬間は全部の口が一斉に出して重なる（「ボフ」と鳴る）ため。
+   * 格子はそのままなので、2 : 3 なら 2 拍後・3 拍後にばらばらに落ち始める（D61）
+   */
+  skipFirstDrop?: boolean;
 };
 
 export class Sim {
@@ -79,6 +84,7 @@ export class Sim {
   private readonly history: Snapshot[] = [];
   private readonly hit: Hit = { t: 0, nx: 0, ny: 0 };
   private readonly near = { dist: 0, nx: 0, ny: 0 };
+  private readonly skipFirstDrop: boolean;
 
   constructor(opts: SimOptions) {
     this.time = new Timeline(opts.bpm);
@@ -96,6 +102,7 @@ export class Sim {
       });
     }
     this.setupEmitters(opts.pattern, 0);
+    this.skipFirstDrop = opts.skipFirstDrop ?? false;
   }
 
   enqueue(cmd: Command): void {
@@ -157,7 +164,7 @@ export class Sim {
     for (const cmd of queue) {
       switch (cmd.kind) {
         case 'addSegment':
-          this.addShape(s, [[cmd.ax, cmd.ay], [cmd.bx, cmd.by]], false, 'line', cmd.dir, 'line');
+          this.addShape(s, [[cmd.ax, cmd.ay], [cmd.bx, cmd.by]], false, 'line', cmd.dir, 'line', 'none', cmd.loaded);
           break;
         case 'addShape':
           this.addShape(s, cmd.points, cmd.closed, cmd.segKind, cmd.dir, cmd.form);
@@ -270,14 +277,14 @@ export class Sim {
       const pts: [number, number][] = [];
       for (let j = 0; j + 1 < flat.length; j += 2) pts.push([flat[j]!, flat[j + 1]!]);
       // 形は forms から（無ければ addShape が点列から推定する。D18）
-      this.addShape(s, pts, closed, kind, dir, scene.forms?.[i], scene.effects?.[i]);
+      this.addShape(s, pts, closed, kind, dir, scene.forms?.[i], scene.effects?.[i], true);
     });
   }
 
   /** 図形を追加する。座標は整数 px に丸める（ライブと読み込み後で同じ状態にするため） */
   private addShape(
     s: number, raw: readonly (readonly [number, number])[], closed: boolean, kind: SegKind, dir?: 1 | -1,
-    formIn?: ShapeForm, effect: ShapeEffect = 'none',
+    formIn?: ShapeForm, effect: ShapeEffect = 'none', loaded = false,
   ): void {
     const points = normalizePoints(raw, closed);
     if (!points) return;
@@ -320,6 +327,7 @@ export class Sim {
       effect,
       gx, gy,
       points: points.map(([x, y]) => [x - gx, y - gy] as [number, number]),
+      loaded,
     });
     this.setShapeRotation(shape, s);
     if (shape.omega !== 0) this.pushPose(shape, s);
@@ -408,7 +416,7 @@ export class Sim {
       if (at(em.nextK) !== s) continue;
       em.x = this.baseXs[em.id]! + driftOffset(this.driftMode, this.driftAmp, em.id, em.nextK);
       em.nextK++;
-      if (!this.playing) continue;
+      if (!this.playing || (s === 0 && this.skipFirstDrop)) continue;
       const ball: Ball = {
         id: this.nextBallId++,
         x: em.x,

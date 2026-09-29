@@ -113,7 +113,8 @@ export type SceneDataV1 = {
 };
 
 export type Command =
-  | { kind: 'addSegment'; ax: number; ay: number; bx: number; by: number; dir?: 1 | -1 }
+  /** loaded: 人が置いたのではなく、始めの配置として置く（確定音を鳴らさない。D61） */
+  | { kind: 'addSegment'; ax: number; ay: number; bx: number; by: number; dir?: 1 | -1; loaded?: boolean }
   /** form を省略したら点列から推定する（inferForm） */
   | { kind: 'addShape'; points: [number, number][]; closed: boolean; segKind: SegKind; dir?: 1 | -1; form?: ShapeForm }
   /** 辺 id を含む図形をまるごと消す */
@@ -177,6 +178,8 @@ export type ShapeAddedEvent = {
   gx: number;
   gy: number;
   points: [number, number][];
+  /** 配置の読み込み（loadScene・始めの配置）で置いた。確定音は人が置いたときだけ鳴らす（D61） */
+  loaded: boolean;
 };
 
 export type SimEvent =
