@@ -9,6 +9,9 @@ const PAD_ROOT_MIDI = ROOT_MIDI;
 const PAD_XFADE_SEC = 3;
 /** 入ってくる層がまだ鳴り残っているときに、高さを変える前に小さくする時間（プツッと鳴らないように） */
 const PAD_DUCK_SEC = 0.08;
+/** 切ったときに小さくしきるまで・入れたときに戻るまで（秒） */
+const PAD_OFF_SEC = 1.5;
+const PAD_ON_SEC = 2;
 /** setLevel(1) のときのパッドの音量（線形） */
 const PAD_MAX_GAIN = 0.1;
 /** 曲ごとの後ろの和音の明るさ（ローパスの周波数、Hz。D48） */
@@ -40,10 +43,9 @@ export class Pad {
       const root = new Tone.FatOscillator({ frequency: 130.8, type: 'sine', count: 2, spread: 14 }).connect(gain);
       const fifth = new Tone.FatOscillator({ frequency: 196, type: 'triangle', count: 2, spread: 10, volume: -6 })
         .connect(gain);
-      root.start();
-      fifth.start();
       this.layers.push({ root, fifth, gain });
     }
+    if (this.on) this.startOscillators(Tone.now());
   }
 
   /** 和音（根音＋5度）を at からクロスフェードで切り替える。root = 区間の根音（C 基準の音高クラス） */
@@ -75,15 +77,32 @@ export class Pad {
     if (live) this.filter.frequency.rampTo(PAD_CUTOFF[song], 2);
   }
 
+  /** 切ると小さくしきってから発振器を止める（鳴っていない間も発振器を回し続けないように） */
   setOn(on: boolean, live: boolean): void {
+    if (on === this.on) return;
     this.on = on;
-    if (live) this.gain.gain.rampTo(this.target(), on ? 2 : 1.5);
+    if (!live) return;
+    const now = Tone.now();
+    this.gain.gain.rampTo(this.target(), on ? PAD_ON_SEC : PAD_OFF_SEC, now);
+    // 止める予約が残っていても、start はその予約を取り消して鳴らし続ける
+    if (on) this.startOscillators(now);
+    else for (const l of this.layers) {
+      l.root.stop(now + PAD_OFF_SEC);
+      l.fifth.stop(now + PAD_OFF_SEC);
+    }
   }
 
   /** 0..1 */
   setLevel(v: number, live: boolean): void {
     this.level = Math.min(1, Math.max(0, v));
     if (live) this.gain.gain.rampTo(this.target(), 0.3);
+  }
+
+  private startOscillators(at: number): void {
+    for (const l of this.layers) {
+      l.root.start(at);
+      l.fifth.start(at);
+    }
   }
 
   private target(): number {

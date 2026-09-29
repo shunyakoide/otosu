@@ -164,6 +164,32 @@ export function makeSubVoice(bus: Tone.InputNode): SubVoice {
   return { synth, ...idleSlot() };
 }
 
+// ---- 鳴っている声部を奪う ----
+
+/** 奪うときに前の音を消しきるまで・新しい音の大きさへ戻すまで（秒） */
+const STEAL_SEC = 0.005;
+
+type Volume = Tone.Param<'decibels'>;
+
+/**
+ * 声部がまだ鳴っていれば（空きがなくて奪ったなら）、その音量を at から STEAL_SEC で 0 まで下げて true を返す。
+ * 鳴っている途中で高さや音色を瞬時に変えるとプツッと鳴るため、消しきってから変えて鳴らし直す
+ */
+function fadeIfSounding(v: Slot, vols: readonly Volume[], at: number): boolean {
+  if (v.endsAt <= at) return false;
+  for (const p of vols) {
+    p.cancelAndHoldAtTime(at);
+    p.linearRampToValueAtTime(-Infinity, at + STEAL_SEC);
+  }
+  return true;
+}
+
+/** 音量を at で db にする。奪った声部（0 まで下げた）は STEAL_SEC かけて戻す */
+function setVolume(p: Volume, db: number, at: number, stolen: boolean): void {
+  if (stolen) p.linearRampToValueAtTime(db, at + STEAL_SEC);
+  else p.setValueAtTime(db, at);
+}
+
 // ---- 1音を鳴らす ----
 
 /**
@@ -210,7 +236,7 @@ export const PEN: FmStrikeSpec = {
 
 /** FM の1声部を鳴らす（line / pen）。t は音域（0 = 最低音 … 1 = 最高音） */
 export function strikeFm(
-  v: FmVoice, sp: FmStrikeSpec, midi: number, t: number, velocity: number, pan: number, at: number,
+  v: FmVoice, sp: FmStrikeSpec, midi: number, t: number, velocity: number, pan: number, at0: number,
   bumper: boolean, extraDb: number, decayScale = 1,
 ): void {
   let modIndex = (sp.modIndex[0] + sp.modIndex[1] * t) * (0.6 + 0.4 * velocity);
@@ -227,9 +253,11 @@ export function strikeFm(
   }
 
   const s = v.synth;
+  const stolen = fadeIfSounding(v, [s.volume], at0);
+  const at = stolen ? at0 + STEAL_SEC : at0;
   s.harmonicity.setValueAtTime(sp.harmonicity(t), at);
   s.modulationIndex.setValueAtTime(modIndex, at);
-  s.volume.setValueAtTime(gainDb, at);
+  setVolume(s.volume, gainDb, at, stolen);
   v.panner.pan.setValueAtTime(pan, at);
   // エンベロープの値は triggerAttack の時点で読まれる（声部は同時に1音だけなので、ここで書き換えてよい）
   s.envelope.attack = attack;
@@ -246,7 +274,7 @@ export function strikeFm(
  * velocity の幅は狭くして、強弱より一定の鼓動にする
  */
 export function strikeKick(
-  v: KickVoice, subs: Pool<SubVoice>, midi: number, velocity: number, pan: number, at: number, bumper: boolean, extraDb: number,
+  v: KickVoice, subs: Pool<SubVoice>, midi: number, velocity: number, pan: number, at0: number, bumper: boolean, extraDb: number,
 ): void {
   const low = midi < KICK_ROOT_MIDI + 12; // C1 帯
   const high = midi >= KICK_ROOT_MIDI + 24; // C3 帯
@@ -265,23 +293,25 @@ export function strikeKick(
   const vel = 0.55 + 0.45 * clamp(velocity, 0, 1);
   const freq = midiToFreq(midi);
   const s = v.synth;
+  // サブもキックと同じ時刻に鳴らすので、どちらかを奪ったら両方を STEAL_SEC 遅らせる
+  const sub = low ? pickSlot(subs, at0) : undefined;
+  const stolen = fadeIfSounding(v, [s.volume], at0);
+  const subStolen = sub !== undefined && fadeIfSounding(sub, [sub.synth.volume], at0);
+  const at = stolen || subStolen ? at0 + STEAL_SEC : at0;
   s.octaves = octaves;
   s.pitchDecay = pitchDecay;
   s.envelope.attack = attack;
   s.envelope.decay = decay;
-  s.volume.setValueAtTime(gainDb, at);
+  setVolume(s.volume, gainDb, at, stolen);
   v.panner.pan.setValueAtTime(pan * KICK_PAN, at);
   const dur = decay * 0.8;
   s.triggerAttackRelease(freq, dur, at, vel);
   occupy(v, at, dur, KICK_RELEASE);
 
-  if (low) {
-    const sub = pickSlot(subs, at);
-    if (sub) {
-      sub.synth.volume.setValueAtTime(SUB_DB + extraDb, at);
-      sub.synth.triggerAttackRelease(freq, 0.7, at, vel);
-      occupy(sub, at, 0.7, 0.3);
-    }
+  if (sub) {
+    setVolume(sub.synth.volume, SUB_DB + extraDb, at, subStolen);
+    sub.synth.triggerAttackRelease(freq, 0.7, at, vel);
+    occupy(sub, at, 0.7, 0.3);
   }
 }
 
@@ -290,7 +320,7 @@ export function strikeKick(
  * 低い音高は1オクターブ上げる。余韻 3〜5 秒、小さめ
  */
 export function strikeChime(
-  v: ChimeVoice, midi: number, t: number, velocity: number, pan: number, at: number, bumper: boolean, extraDb: number,
+  v: ChimeVoice, midi: number, t: number, velocity: number, pan: number, at0: number, bumper: boolean, extraDb: number,
 ): void {
   const m = midi < CHIME_LIFT_BELOW ? midi + 12 : midi;
   let modIndex = 0.7 + 0.5 * velocity;
@@ -303,9 +333,11 @@ export function strikeChime(
     gainDb += 1.5;
   }
   const freq = midiToFreq(m);
+  const stolen = fadeIfSounding(v, [v.fm.volume, v.beat.volume], at0);
+  const at = stolen ? at0 + STEAL_SEC : at0;
   v.fm.modulationIndex.setValueAtTime(modIndex, at);
-  v.fm.volume.setValueAtTime(gainDb, at);
-  v.beat.volume.setValueAtTime(gainDb + CHIME_BEAT_DB, at);
+  setVolume(v.fm.volume, gainDb, at, stolen);
+  setVolume(v.beat.volume, gainDb + CHIME_BEAT_DB, at, stolen);
   v.panner.pan.setValueAtTime(pan, at);
   v.fm.envelope.attack = attack;
   v.fm.envelope.decay = decay;
@@ -321,7 +353,7 @@ export function strikeChime(
  * 低い音高は1オクターブ上げる
  */
 export function strikeWood(
-  v: WoodVoice, midi: number, t: number, velocity: number, pan: number, at: number, bumper: boolean, extraDb: number,
+  v: WoodVoice, midi: number, t: number, velocity: number, pan: number, at0: number, bumper: boolean, extraDb: number,
 ): void {
   const m = midi < WOOD_LIFT_BELOW ? midi + 12 : midi;
   const freq = midiToFreq(m);
@@ -334,8 +366,10 @@ export function strikeWood(
     toneDb += 1;
   }
   const vel = 0.5 + 0.5 * clamp(velocity, 0, 1);
-  v.tone.volume.setValueAtTime(toneDb, at);
-  v.noise.volume.setValueAtTime(noiseDb, at);
+  const stolen = fadeIfSounding(v, [v.tone.volume, v.noise.volume], at0);
+  const at = stolen ? at0 + STEAL_SEC : at0;
+  setVolume(v.tone.volume, toneDb, at, stolen);
+  setVolume(v.noise.volume, noiseDb, at, stolen);
   v.band.frequency.setValueAtTime(clamp(freq * 2.5, 1200, 6000), at);
   v.panner.pan.setValueAtTime(pan, at);
   v.tone.envelope.decay = decay;

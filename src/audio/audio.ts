@@ -83,6 +83,8 @@ export class Audio {
 
   private muted = false;
   private playing = true;
+  /** この時刻からあとの発音は聞こえない（ミュート中か、止めて小さくしきった後）。鳴らさずに捨てて処理を減らす */
+  private silentFrom = Infinity;
 
   /**
    * ネイティブの AudioContext を自前で作って Tone に渡す。
@@ -184,6 +186,7 @@ export class Audio {
 
     await reverb.ready;
     this.started = true;
+    this.updateSilence(0);
     if (this.pendingRoot !== undefined) this.setSection(this.pendingRoot, this.raw.currentTime);
   }
 
@@ -205,6 +208,7 @@ export class Audio {
     this.muted = on;
     if (!this.started) return;
     this.master.gain.rampTo(this.level(), 0.03);
+    this.updateSilence(0.03);
   }
 
   /** 再生・停止（D50）。止めるとすべての内蔵音を STOP_FADE_SEC かけて小さくし、続けると少し早めに戻す */
@@ -212,6 +216,12 @@ export class Audio {
     this.playing = on;
     if (!this.started) return;
     this.master.gain.rampTo(this.level(), on ? PLAY_FADE_SEC : STOP_FADE_SEC);
+    this.updateSilence(STOP_FADE_SEC);
+  }
+
+  /** 音量を 0 へ fadeSec かけて下げ始めたなら、下げきる時刻から鳴らさない。戻したらすぐ鳴らす */
+  private updateSilence(fadeSec: number): void {
+    this.silentFrom = this.level() > 0 ? Infinity : Math.min(this.silentFrom, this.raw.currentTime + fadeSec);
   }
 
   private level(): number {
@@ -227,6 +237,7 @@ export class Audio {
 
     // 過去の時刻は Tone が現在時刻に丸めるので、同時刻の判定もそれに合わせる
     const at = Math.max(time, this.raw.currentTime);
+    if (at >= this.silentFrom) return;
     const pan = clamp(this.stereoWidth * ((2 * e.x) / WORLD_W - 1), -1, 1);
     const t = clamp(e.note / SLOT_MAX, 0, 1);
     const bumper = e.segKind === 'bumper';
@@ -299,6 +310,7 @@ export class Audio {
   confirm(midi: number, time: number, form?: ShapeForm): void {
     if (!this.started) return;
     const at = Math.max(time, this.raw.currentTime);
+    if (at >= this.silentFrom) return;
     // 配置の読み込みなどで同じステップに何個も来たときは1回だけ鳴らす（同時刻の再発音は Tone が例外を投げる）
     if (at < this.lastConfirmAt + 0.03) return;
     this.lastConfirmAt = at;
@@ -337,6 +349,7 @@ export class Audio {
   tick(midi: number): void {
     if (!this.started) return;
     const now = this.raw.currentTime;
+    if (now >= this.silentFrom) return;
     if (now - this.lastTickAt < 0.03) return; // 速くドラッグしたときの連打を間引く
     this.lastTickAt = now;
     this.tickSynth.triggerAttackRelease(midiToFreq(midi + 12), 0.03, now + 0.005, 0.8);
