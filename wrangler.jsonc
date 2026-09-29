@@ -1,5 +1,8 @@
 {
   "name": "otosu",
   "compatibility_date": "2026-09-01",
+  "workers_dev": true,
+  // The author's domain. Remove this line (or use your own domain) when deploying a fork.
+  "routes": [{ "pattern": "otosu.shunyakoide.com", "custom_domain": true }],
   "assets": { "directory": "./dist" }
 }
