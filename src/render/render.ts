@@ -10,6 +10,7 @@ import type { SimEvent, Snapshot } from '../sim/types';
 import { Backdrop, type BackdropKind } from './backdrop';
 import { Balls, type SnapshotSource } from './balls';
 import { Emitters } from './emitters';
+import type { FlowerKind } from './flowers';
 import { FlowPass, type FlowOptions } from './flow';
 import { Glints } from './glints';
 import { Hud } from './hud';
@@ -42,8 +43,9 @@ export type RenderParams = {
   idleLine: number;
   /** 'geometry' = 履歴から尾を描く（ステップ2）/ 'afterimage' = ステップ1の見た目（尾なし・damp 0.88） */
   trail?: TrailMode;
-  /** 衝突で花が咲く（D25） */
+  /** 衝突で花が咲く（D25）と、咲かせる花の種類 */
   flowers?: boolean;
+  flowerKind?: FlowerKind;
   /** 背景（D33, D34）の種類と明るさ */
   backdrop?: BackdropKind;
   backdropLevel?: number;
@@ -284,7 +286,7 @@ export class Renderer {
     this.energyStep = e.step;
 
     if (s && (this.params.flowers ?? true) && e.segKind !== 'bumper' && e.velocity >= 0.1) {
-      this.vines.grow(s, e.step, e.x, e.y, e.velocity, this.params.colorMode === 'mono');
+      this.vines.grow(s, e.step, e.x, e.y, e.velocity, this.params.colorMode === 'mono', this.params.flowerKind ?? 'mixed');
     }
 
     // 打点の波紋（circle は重心の輪で代える。square は短く小さく）

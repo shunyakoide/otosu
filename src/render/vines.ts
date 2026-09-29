@@ -1,6 +1,6 @@
 import { Color, PlaneGeometry } from 'three';
 import { HZ } from '../sim/constants';
-import { FLOWER_HOLD_SEC, Flowers } from './flowers';
+import { FLOWER_HOLD_SEC, Flowers, SPECIES, type FlowerKind } from './flowers';
 import { hash01 } from './hash';
 import { commit, instanced, putQuad } from './instancing';
 import { noteColor, OFF_WHITE, type ColorMode } from './palette';
@@ -43,11 +43,26 @@ const LEAF_LEN = 0.95;
 const LEAF_GAIN = 0.32;
 const LEAF_ANGLE = 0.75;
 const VINE_COLOR = new Color(0x6fcf7a);
+/** すだれ（花畑）: 外へ出る幅と垂れる長さ（花の大きさに対して）、弓なりの強さ、房の花の数、上から先まで咲き進む秒数 */
+const CASCADE_OUT = 1.0;
+const CASCADE_DROP = 3.2;
+const CASCADE_BEND = 0.22;
+const CASCADE_MIN = 5;
+const CASCADE_MAX = 9;
+const CASCADE_SEC = 0.6;
+/** 花火（花畑）: 茎が届く長さ（花の大きさに対して）、上へ寄せる強さ、伸びる速さ（px/s） */
+const BURST_REACH = 4.5;
+const BURST_RISE = 0.5;
+const BURST_SPEED = 260;
+/** 花火とすだれの混み具合を、普通の花と別に見るための列（free の dn に入れる。花のずれより十分大きい値） */
+const LANE_BURST = 1e5;
+const LANE_CASCADE = 2e5;
 
 /** at = 咲き始めるステップ（落ち始めたら図形に付いて動かすのをやめる） */
 type VineFlower = { handle: number; arc: number; off: number; at: number };
 /** 図形の周上で、花や葉が咲いている場所と期間（ステップ） */
-type Bloomed = { arc: number; from: number; until: number; leaf: boolean };
+/** dn は蔦からの法線方向のずれ（px） */
+type Bloomed = { arc: number; from: number; until: number; leaf: boolean; dn: number };
 
 type Vine = {
   group: number; step: number; phi0: number; arc0: number; reach: number; seed: number; note: number;
@@ -89,29 +104,41 @@ export class Vines {
     this.flowers.clear();
   }
 
-  /** 衝突した点から蔦を伸ばし、通るところに咲く花を先に予約する（開く時刻は蔦が届く時刻） */
-  grow(s: Shape, step: number, x: number, y: number, v: number, mono: boolean): void {
+  /**
+   * 衝突した点から蔦を伸ばし、通るところに咲く花を先に予約する（開く時刻は蔦が届く時刻）。
+   * kind は咲かせる花の種類（花の大きさ・間隔・葉の有無も種類で変わる）
+   */
+  grow(s: Shape, step: number, x: number, y: number, v: number, mono: boolean, kind: FlowerKind = 'mixed'): void {
+    const spc = SPECIES[kind];
     if (s.perimeter <= 0) return;
     const last = this.vineAt.get(s.group);
     if (last !== undefined && step >= last && (step - last) / HZ < VINE_GAP_SEC) return;
     this.vineAt.set(s.group, step);
     const arc0 = arcPos(s, step, x, y);
-    let reach = VINE_REACH + VINE_REACH_V * v;
+    let reach = (VINE_REACH + VINE_REACH_V * v) * (spc.reach ?? 1);
     if (s.closed) reach = Math.min(reach, s.perimeter / 2);
     const r = (k: number, j: number) => hash01(s.group, step, 300 + k * 8 + j);
+    // r は花ごとに 8 個まで。ほかの乱数は用途ごとに別の系列にする（花畑では k が数百になり、範囲が重なるため）
+    const stream = (salt: number) => {
+      const seed = (hash01(s.group, step, -1 - salt) * 0x7fffffff) | 0;
+      return (k: number, j: number) => hash01(seed, k, j);
+    };
+    const rFace = stream(0), rCascade = stream(1), rExtra = stream(2), rBurst = stream(3);
     // 同じ所に続けて当たっても、まだ咲いている所には重ねない（散ったあとにまた咲く）
     const hold = Math.round(FLOWER_HOLD_SEC * HZ);
     const busy = (this.bloomed.get(s.group) ?? []).filter((b) => b.from <= step && step < b.until);
     const taken: Bloomed[] = [];
-    const free = (arc: number, at: number, leaf: boolean): boolean => {
-      const gap = leaf ? VINE_CROWD_LEAF : VINE_CROWD_FLOWER;
+    // 周に沿っても蔦から離れる向きにも近いときだけ、混んでいるとみなす
+    const free = (arc: number, at: number, leaf: boolean, dn = 0): boolean => {
+      // 小さな花の種類は、そのぶん詰めて咲かせる
+      const gap = leaf ? VINE_CROWD_LEAF : VINE_CROWD_FLOWER * Math.min(1, spc.size);
       for (const b of busy) {
         if (b.leaf !== leaf || at < b.from || at >= b.until) continue;
         let d = Math.abs(arc - b.arc);
         if (s.closed) d = Math.min(d, s.perimeter - d);
-        if (d < gap) return false;
+        if (d < gap && Math.abs(dn - b.dn) < gap) return false;
       }
-      taken.push({ arc, from: at, until: at + hold, leaf });
+      taken.push({ arc, from: at, until: at + hold, leaf, dn });
       return true;
     };
     const vine: Vine = {
@@ -119,37 +146,51 @@ export class Vines {
     };
     const phi = shapeAngle(s, step);
     const base = noteColor(s.note, 'pitch');
-    const size = VINE_FLOWER_R + VINE_FLOWER_R_V * v;
+    const size = (VINE_FLOWER_R + VINE_FLOWER_R_V * v) * spc.size;
     const gain = VINE_FLOWER_GAIN + VINE_FLOWER_GAIN_V * v;
     const pt = this.pt;
     let k = 0;
     const leafC = new Color().copy(VINE_COLOR).lerp(base, 0.25);
     if (mono) leafC.copy(OFF_WHITE);
+    if (spc.leafColor) leafC.copy(spc.leafColor);
     /** 周上 d（符号付き）の位置に1輪。scale は大きさ、dn・da は蔦からの法線・周方向のずれ（px） */
     const put = (d: number, scale: number, dn: number, da: number) => {
       const arc = wrapArc(s, arc0 + d + da);
       if (Number.isNaN(arc)) return;
       pointAt(s, phi, arc, pt);
       const side = dn >= 0 ? 1 : -1;
-      const off = vineOff(vine, d) + dn;
       const at = step + Math.round((Math.abs(d) / VINE_SPEED) * HZ);
-      if (!free(arc, at, false)) return;
-      const stem = VINE_STEM * size * scale * (0.6 + 0.8 * r(k, 0));
+      if (!free(arc, at, false, dn)) return;
+      // 花が向く方向: 蔦の外側。ばらばらに伸びる種類（花畑）は、向きをずらして少し上へ寄せる
+      let fx = pt.nx * side, fy = pt.ny * side;
+      if (spc.faceJitter > 0) {
+        const a = (rFace(k, 0) - 0.5) * 2 * spc.faceJitter;
+        const ca = Math.cos(a), sa = Math.sin(a);
+        [fx, fy] = [fx * ca - fy * sa, fx * sa + fy * ca - spc.rise];
+        const l = Math.hypot(fx, fy) || 1;
+        fx /= l;
+        fy /= l;
+      }
+      // ばらばらに伸びる種類は、蔦から生えて茎で外へ伸びる（ずれの分だけ茎を長く）。ほかは蔦から離れた所に咲く
+      const rooted = spc.faceJitter > 0;
+      const off = vineOff(vine, d) + (rooted ? 0 : dn);
+      const stem = VINE_STEM * size * scale * spc.stem * (rooted ? 0.3 + 1.4 * r(k, 0) : 0.6 + 0.8 * r(k, 0)) + (rooted ? Math.abs(dn) : 0);
       const handle = this.flowers.bloom(s.group, at, k, pt.x + pt.nx * off, pt.y + pt.ny * off, {
         radius: size * scale, gain,
-        faceX: pt.nx * side, faceY: pt.ny * side,
+        faceX: fx, faceY: fy,
         tilt: 0.2 + 1.2 * r(k, 1),
         stem,
-      }, base, mono);
+      }, base, mono, kind);
       vine.flowers.push({ handle, arc, off, at });
       k++;
+      // 茎を線で描く種類と、ばらばらに伸びる種類（花畑。葉が重なって緑が光りすぎる）は、付け根の葉を出さない
+      if (!spc.leaves || spc.stemColor || spc.faceJitter > 0) return;
       // 茎の代わりに、花の付け根から左右へ葉を2枚（花はその間から伸びる）
-      const fx = pt.nx * side, fy = pt.ny * side;
       for (const sgn of [1, -1]) {
         const a = sgn * (0.55 + 0.4 * r(k, 6));
         const ca = Math.cos(a), sa = Math.sin(a);
         const lh = this.flowers.leaf(s.group, at, k, pt.x + pt.nx * off, pt.y + pt.ny * off, {
-          len: (stem * 1.2 + size * scale * 0.3) * (0.8 + 0.4 * r(k, 7)),
+          len: (stem * 1.2 + size * scale * 0.3) * spc.leafScale * (0.8 + 0.4 * r(k, 7)),
           gain: LEAF_GAIN,
           dirX: fx * ca - fy * sa,
           dirY: fx * sa + fy * ca,
@@ -159,8 +200,8 @@ export class Vines {
         k++;
       }
     };
-    // 葉: 蔦に沿って左右交互に。伸びる向きへ少し倒して出る
-    for (const dir of [1, -1]) {
+    // 葉: 蔦に沿って左右交互に。伸びる向きへ少し倒して出る（葉のない種類は出さない）
+    for (const dir of spc.leaves ? [1, -1] : []) {
       let side = r(k, 3) < 0.5 ? 1 : -1;
       for (let d = LEAF_GAP * (0.3 + 0.7 * r(k, 2)); d <= reach; d += LEAF_GAP * (0.7 + 0.6 * r(k, 2))) {
         const arc = wrapArc(s, arc0 + dir * d);
@@ -177,7 +218,7 @@ export class Vines {
           continue;
         }
         const handle = this.flowers.leaf(s.group, at, k, pt.x + pt.nx * off, pt.y + pt.ny * off, {
-          len: size * LEAF_LEN * (0.7 + 0.6 * r(k, 4)),
+          len: size * LEAF_LEN * spc.leafScale * (0.7 + 0.6 * r(k, 4)),
           gain: LEAF_GAIN,
           dirX: pt.nx * side * ca + tx * dir * sa,
           dirY: pt.ny * side * ca + ty * dir * sa,
@@ -189,19 +230,106 @@ export class Vines {
       }
     }
 
+    /**
+     * すだれ: 周上 d から花の房が弓なりに垂れる（少し外・上へ出てから下へ）。先ほど花が小さく、上から順に咲く。
+     * 花は弓（弦からのふくらみが sin）に沿って並べる（画面は y 上向き）
+     */
+    const cascade = (d: number) => {
+      const arc = wrapArc(s, arc0 + d);
+      if (Number.isNaN(arc)) return;
+      const at0 = step + Math.round((Math.abs(d) / VINE_SPEED) * HZ);
+      // まだ垂れている所には重ねない（すだれ専用の列で混み具合を見る）
+      if (!free(arc, at0, false, LANE_CASCADE)) return;
+      pointAt(s, phi, arc, pt);
+      const off = vineOff(vine, d);
+      const bx = pt.x + pt.nx * off, by = pt.y + pt.ny * off;
+      const rc = (j: number) => rCascade(k, j);
+      // 出る向き: 蔦の外側を横へ寄せ、少し上へ
+      const sgn = pt.nx !== 0 ? Math.sign(pt.nx) : rc(0) < 0.5 ? 1 : -1;
+      let ox = pt.nx + sgn * 0.8, oy = 0.35;
+      const ol = Math.hypot(ox, oy);
+      ox /= ol;
+      oy /= ol;
+      const w = size * CASCADE_OUT * (0.6 + 0.8 * rc(1));
+      const len = size * CASCADE_DROP * (spc.cascadeDrop ?? 1) * (0.6 + 0.8 * rc(2));
+      const vx = ox * w, vy = oy * w - len;
+      const vl = Math.hypot(vx, vy);
+      // 上へふくらむ向きに弓なり
+      const bend = CASCADE_BEND * (vx >= 0 ? 1 : -1);
+      const px = -vy / vl, py = vx / vl;
+      const n = CASCADE_MIN + Math.floor(rc(3) * (CASCADE_MAX - CASCADE_MIN + 1));
+      for (let j = 1; j <= n; j++) {
+        const t = j / n;
+        const bow = Math.sin(Math.PI * t) * vl * bend;
+        const cx = vx * t + px * bow, cy = vy * t + py * bow;
+        const at = at0 + Math.round(t * CASCADE_SEC * HZ);
+        const handle = this.flowers.bloom(s.group, at, k, bx, by, {
+          radius: size * (0.42 - 0.2 * t) * (0.85 + 0.3 * rCascade(k, 4)),
+          gain,
+          faceX: cx, faceY: -cy,
+          tilt: 0.5 + 0.7 * rCascade(k, 5),
+          stem: Math.hypot(cx, cy),
+        }, base, mono, kind);
+        vine.flowers.push({ handle, arc, off, at });
+        k++;
+      }
+    };
+
     // 当たった所に大きな1輪
     put(0, VINE_FLOWER_HIT_SCALE, r(0, 3) < 0.5 ? 1 : -1, 0);
+    // 花火: 当たった所から、長さのばらばらな茎が放射状に伸びて一気に咲く（近いものから順に）。上寄りに
+    // 同じ所に続けて当たったときは、前の花火が咲いている間は重ねない（花火専用の列で混み具合を見る）
+    const burstArc = wrapArc(s, arc0);
+    if (spc.burst && !Number.isNaN(burstArc) && free(burstArc, step, false, LANE_BURST)) {
+      const arc = burstArc;
+      pointAt(s, phi, arc, pt);
+      const off = vineOff(vine, 0);
+      const bx = pt.x + pt.nx * off, by = pt.y + pt.ny * off;
+      for (let j = 0; j < spc.burst; j++) {
+        const rb = (i: number) => rBurst(j, i);
+        // 画面（y 上）での向き: 全方向に、上へ寄せる
+        const a = (j + rb(0)) / spc.burst * Math.PI * 2;
+        let ux = Math.cos(a), uy = Math.sin(a) + BURST_RISE;
+        const ul = Math.hypot(ux, uy);
+        ux /= ul;
+        uy /= ul;
+        const reachB = size * BURST_REACH * (0.25 + 0.75 * Math.sqrt(rb(1)));
+        const at = step + Math.round((reachB / BURST_SPEED) * HZ);
+        const handle = this.flowers.bloom(s.group, at, k, bx, by, {
+          radius: size * (0.5 + 0.6 * rb(2)),
+          gain,
+          faceX: ux, faceY: -uy,
+          tilt: 0.2 + 1.0 * rb(3),
+          stem: reachB,
+        }, base, mono, kind);
+        vine.flowers.push({ handle, arc, off, at });
+        k++;
+      }
+    }
     for (const dir of [1, -1]) {
-      let d = VINE_FLOWER_GAP * (0.5 + 0.5 * r(k, 2));
+      const gap = VINE_FLOWER_GAP * spc.gap;
+      let d = gap * (0.5 + 0.5 * r(k, 2));
       while (d <= reach) {
         // 房: 主の1輪に、小さな花を 0〜2 輪添える
         const side = r(k, 3) < 0.5 ? 1 : -1;
         put(dir * d, 0.6 + 0.8 * r(k, 4), side * 2, 0);
-        const extra = r(k, 5) < 0.6 ? (r(k, 6) < 0.35 ? 2 : 1) : 0;
-        for (let j = 0; j < extra; j++) {
-          put(dir * d, 0.35 + 0.3 * r(k, 4), -side * (2 + 8 * r(k, 6)), (r(k, 7) - 0.5) * VINE_FLOWER_GAP * 0.8);
+        if (spc.cascade && rCascade(k, 9) < spc.cascade) cascade(dir * d);
+        if (spc.fill) {
+          // 花畑: 毎回たくさん、蔦の両側へ、周に沿っても広く
+          const extra = 2 + Math.floor(rExtra(k, 0) * (spc.extras - 1));
+          const kb = k;
+          for (let j = 0; j < extra; j++) {
+            const rj = (i: number) => rExtra(kb, 1 + j * 4 + i);
+            put(dir * d, 0.35 + 0.3 * r(k, 4) + 0.3 * rj(1), (rj(0) < 0.5 ? 1 : -1) * (2 + spc.spread * rj(2)), (rj(3) - 0.5) * gap * 1.6);
+          }
+        } else {
+          // 小さな花を 0〜2 輪、主の反対側へ添える
+          const extra = r(k, 5) < 0.6 ? Math.min(spc.extras, r(k, 6) < 0.35 ? 2 : 1) : 0;
+          for (let j = 0; j < extra; j++) {
+            put(dir * d, 0.35 + 0.3 * r(k, 4), -side * (2 + spc.spread * r(k, 6)), (r(k, 7) - 0.5) * gap * 0.8);
+          }
         }
-        d += VINE_FLOWER_GAP * (0.7 + 0.6 * r(k, 2));
+        d += gap * (0.7 + 0.6 * r(k, 2));
       }
     }
     this.bloomed.set(s.group, busy.concat(taken));

@@ -1,5 +1,6 @@
 import type { Tool } from '../input/input';
 import { BACKDROPS, type BackdropKind } from '../render/backdrop';
+import { FLOWER_KINDS, type FlowerKind } from '../render/flowers';
 import type { ColorMode } from '../render/palette';
 import { DEFAULT_SONG, type SongId } from '../sim/music';
 import type { DriftMode } from '../sim/types';
@@ -43,6 +44,8 @@ export const DEFAULTS = {
   drip: true,
   dripSpeed: 90,
   flowers: true,
+  /** 咲かせる花の種類（mixed = いろいろ） */
+  flowerKind: 'mixed' as FlowerKind,
   backdrop: 'none' as BackdropKind,
   backdropLevel: 1,
   hud: false,
@@ -70,7 +73,7 @@ export function currentPrefs(params: Params): Record<string, unknown> {
 
 /** この端末に保存されていた設定（型と選択肢が合うものだけ。配置側の値は含めない） */
 export function storedPrefs(): Partial<Params> {
-  const prefs = pickPrefs(DEFAULTS, loadPrefs(), { trail: TRAILS, pixelRatio: PIXEL_RATIOS, backdrop: BACKDROPS });
+  const prefs = pickPrefs(DEFAULTS, loadPrefs(), { trail: TRAILS, pixelRatio: PIXEL_RATIOS, backdrop: BACKDROPS, flowerKind: FLOWER_KINDS });
   for (const k of NOT_PREFS) delete prefs[k as keyof Params];
   return prefs;
 }

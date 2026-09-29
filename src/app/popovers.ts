@@ -1,5 +1,6 @@
 import type { Audio } from '../audio/audio';
 import { BACKDROPS } from '../render/backdrop';
+import { FLOWER_KINDS, FLOWER_LABELS } from '../render/flowers';
 import type { Renderer } from '../render/render';
 import { SONG_IDS } from '../sim/music';
 import type { DriftMode } from '../sim/types';
@@ -105,6 +106,7 @@ function lightPopover({ params }: PopoversDeps): Popover {
   h.slider(params, 'dripSpeed', { label: 'speed', min: 10, max: 300, step: 5, format: (v) => `${v}`, enabled: () => params.drip });
   h.hint('light runs down from the shape that was hit');
   h.toggle(params, 'flowers', 'flowers');
+  h.choice(params, 'flowerKind', 'kind', choices(FLOWER_KINDS, (k) => FLOWER_LABELS[k] ?? k));
   h.hint('a vine grows from the hit and blooms');
   h.toggle(params, 'hud', 'readout');
   h.hint('a small frame and coordinates flash where the ball hit');
