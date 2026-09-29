@@ -2,7 +2,7 @@
 // NOISE・NOISE3・NOISED は Inigo Quilez の勾配ノイズ・値ノイズをもとにしている:
 //   NOISE   https://www.shadertoy.com/view/XdXGW8 (Noise - gradient - 2D)
 //   NOISE3  https://www.shadertoy.com/view/4sfGzS (Noise - value - 3D)
-//   NOISED  https://www.shadertoy.com/view/XsXfRH (Noise - value - 3D - deriv)
+//   NOISED  https://www.shadertoy.com/view/XsXfRH (Noise - Value - 3D - Deriv)
 // その部分は次のライセンスに従う。
 //
 // The MIT License
