@@ -1,7 +1,9 @@
-import { AdditiveBlending, CanvasTexture, Color, LinearFilter, Mesh, PlaneGeometry, ShaderMaterial, Vector2, Vector4 } from 'three';
+import {
+  AdditiveBlending, CanvasTexture, Color, LinearFilter, Mesh, PlaneGeometry, ShaderMaterial, Vector2, Vector4, type Texture,
+} from 'three';
 import type { BackdropLayer, LayerFrame } from './backdrop';
-import { NOISE, QUAD_VERT } from './glsl';
-import { disposeMesh, HitRing } from './layer';
+import { NOISE, QUAD_VERT, RAND } from './glsl';
+import { CellField, disposeMesh, HitRing } from './layer';
 
 // 背景の文字の網（D39、ascii）。画面を縦長の升目に分け、升目ごとに文字を1つ置く。
 // 文字は濃淡の場で決まる（薄い ` . : - = + * # % @` 濃い）。場はゆっくり流れるノイズと、当たった点のにじみの和。
@@ -27,23 +29,19 @@ const SPEED = 0.06;
 const MAX_HITS = 16;
 const HIT_SEC = 2.6;
 
-const FRAG = /* glsl */ `
+/** 升目ごとの濃さと、輪の上の度合い（D66: 升目1つにつき1回だけ計算する） */
+const FIELD = /* glsl */ `
 #define N ${MAX_HITS}
-uniform sampler2D atlas;
 uniform vec2 res;       // 描く先の大きさ（デバイス px）
 uniform vec2 cell;      // 升目（デバイス px）
 uniform vec4 view;      // minX, maxX, maxY, unit（ワールド）
 uniform float time;
 uniform float energy;
-uniform float level;
-uniform vec3 base;
 uniform vec4 hits[N];   // xy（ワールド）, 経過秒, 強さ
 uniform float hitsP[N]; // 音の高さ 0..1
 ${NOISE}
 
-void main() {
-  vec2 id = floor(gl_FragCoord.xy / cell);
-  vec2 f = gl_FragCoord.xy / cell - id;
+vec4 cellValue(vec2 id) {
   vec2 uv = (id + 0.5) * cell / res;
   vec2 w = vec2(mix(view.x, view.y, uv.x), (1.0 - uv.y) * view.z);
   vec2 q = w / view.w;
@@ -65,7 +63,23 @@ void main() {
     v += (0.5 * ring + core) * fade * min(1.2, h.w);
     scr += ring * fade * min(1.0, h.w);
   }
-  v = clamp(v, 0.0, 1.0);
+  return vec4(clamp(v, 0.0, 1.0), scr, 0.0, 0.0);
+}`;
+
+const FRAG = /* glsl */ `
+uniform sampler2D atlas;
+uniform sampler2D field;
+uniform vec2 cell;
+uniform float time;
+uniform float level;
+uniform vec3 base;
+${RAND}
+void main() {
+  vec2 id = floor(gl_FragCoord.xy / cell);
+  vec2 f = gl_FragCoord.xy / cell - id;
+  vec2 vs = texelFetch(field, ivec2(id), 0).xy;
+  float v = vs.x;
+  float scr = vs.y;
 
   float k = floor(v * ${(RAMP.length - 1).toFixed(1)} + 0.5);
   // 輪の上では、文字が時刻ごとにでたらめに入れ替わる
@@ -111,8 +125,10 @@ export class Ascii implements BackdropLayer {
     base: { value: new Color(COLOR) },
     hits: { value: this.hitsU },
     hitsP: { value: new Array<number>(MAX_HITS).fill(0) },
+    field: { value: null as Texture | null },
   };
   private readonly ring = new HitRing(MAX_HITS, HIT_SEC);
+  private readonly field = new CellField(this.u, FIELD);
 
   constructor() {
     this.object = new Mesh(new PlaneGeometry(2, 2), new ShaderMaterial({
@@ -121,6 +137,7 @@ export class Ascii implements BackdropLayer {
     }));
     this.object.frustumCulled = false;
     this.object.renderOrder = -1;
+    this.u.field.value = this.field.texture;
   }
 
   hit(x: number, y: number, at: number, strength: number, pitch: number, _color: Color): void {
@@ -138,10 +155,14 @@ export class Ascii implements BackdropLayer {
     this.u.level.value = f.level;
     this.ring.fill(this.hitsU, f.time);
     for (let i = 0; i < MAX_HITS; i++) this.u.hitsP.value[i] = this.ring.pitch[i]!;
+    const { x: w, y: h } = this.u.res.value;
+    const c = this.u.cell.value;
+    this.field.render(f.renderer, Math.ceil(w / c.x), Math.ceil(h / c.y));
   }
 
   dispose(): void {
     this.u.atlas.value.dispose();
+    this.field.dispose();
     disposeMesh(this.object);
   }
 }

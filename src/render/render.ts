@@ -1,5 +1,5 @@
 import {
-  Color, HalfFloatType, NeutralToneMapping, OrthographicCamera, Scene, WebGLRenderTarget, WebGLRenderer,
+  Color, HalfFloatType, NeutralToneMapping, OrthographicCamera, RGBFormat, Scene, WebGLRenderTarget, WebGLRenderer,
 } from 'three';
 import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
@@ -84,6 +84,14 @@ const WOOD_RIPPLE_SEC = 0.18;
 /** 画面上端のツールバー用の帯（CSS px）の既定値。狭い画面でツールバーが折り返すと setTopBand で広げる */
 export const TOP_BAND_PX = 52;
 
+/** R11G11B10F に MSAA 4 で描けるか（EXT_color_buffer_float が要る）。描けなければ半精度の RGBA のまま */
+function packedFloatMsaa(renderer: WebGLRenderer): boolean {
+  const gl = renderer.getContext() as WebGL2RenderingContext;
+  if (!gl.getExtension('EXT_color_buffer_float')) return false;
+  const samples = gl.getInternalformatParameter(gl.RENDERBUFFER, gl.R11F_G11F_B10F, gl.SAMPLES) as Int32Array | null;
+  return (samples?.[0] ?? 0) >= 4;
+}
+
 export class Renderer {
   readonly canvas: HTMLCanvasElement;
   private topBand = TOP_BAND_PX;
@@ -143,6 +151,11 @@ export class Renderer {
     parent.appendChild(this.canvas);
 
     const rt = new WebGLRenderTarget(1, 1, { type: HalfFloatType, samples: 4 });
+    // 今の絵はアルファを使わないので、1画素 32bit の浮動小数（R11G11B10F）にする。MSAA 4 のバッファの読み書きが半分になる（D66）
+    if (packedFloatMsaa(this.renderer)) {
+      rt.texture.format = RGBFormat;
+      rt.texture.internalFormat = 'R11F_G11F_B10F';
+    }
     this.composer = new EffectComposer(this.renderer, rt);
     this.composer.addPass(new RenderPass(this.scene, this.camera));
     this.afterimage = new FlowPass(params.bloomStrength, 0.35, 0.8);

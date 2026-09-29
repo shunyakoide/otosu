@@ -1,7 +1,7 @@
-import { AdditiveBlending, Color, Mesh, PlaneGeometry, ShaderMaterial, Vector2, Vector4 } from 'three';
+import { AdditiveBlending, Color, Mesh, PlaneGeometry, ShaderMaterial, Vector2, Vector4, type Texture } from 'three';
 import type { BackdropLayer, LayerFrame } from './backdrop';
 import { NOISE, QUAD_VERT } from './glsl';
-import { disposeMesh, HitRing } from './layer';
+import { CellField, disposeMesh, HitRing } from './layer';
 
 // 背景の網点（D38、bitmap）。画面を正方形の升目に分け、升目ごとに角の丸い四角の点を置く。
 // 点の大きさは、ゆっくり動く濃淡の場で決まる（濃いほど大きく、隣とつながってぼやける）。
@@ -24,17 +24,14 @@ const SPEED = 0.05;
 const MAX_HITS = 16;
 const HIT_SEC = 3.2;
 
-const FRAG = /* glsl */ `
+/** 升目ごとの濃さ（D66: 升目1つにつき1回だけ計算する） */
+const FIELD = /* glsl */ `
 #define N ${MAX_HITS}
 uniform vec2 res;       // 描く先の大きさ（デバイス px）
 uniform float cell;     // 升目（デバイス px）
 uniform vec4 view;      // minX, maxX, maxY, unit（ワールド）
 uniform float time;
 uniform float energy;
-uniform float level;
-uniform vec3 deep;
-uniform vec3 mid;
-uniform vec3 pale;
 uniform vec4 hits[N];   // xy（ワールド）, 経過秒, 強さ
 uniform float hitsP[N]; // 音の高さ 0..1
 ${NOISE}
@@ -63,10 +60,22 @@ float field(vec2 c) {
   return clamp(v, 0.0, 1.0);
 }
 
+vec4 cellValue(vec2 id) {
+  return vec4(field((id + 0.5) * cell));
+}`;
+
+const FRAG = /* glsl */ `
+uniform sampler2D fieldTex;
+uniform float cell;
+uniform float level;
+uniform vec3 deep;
+uniform vec3 mid;
+uniform vec3 pale;
+
 void main() {
   vec2 id = floor(gl_FragCoord.xy / cell);
   vec2 f = gl_FragCoord.xy / cell - id - 0.5;
-  float v = field((id + 0.5) * cell);
+  float v = texelFetch(fieldTex, ivec2(id), 0).x;
   if (v < 0.03) discard;
   // 点の半幅（升目を 1 とする）。濃いと升目いっぱいになり、縁がぼやける
   float s = 0.08 + 0.44 * v;
@@ -96,8 +105,10 @@ export class Bitmap implements BackdropLayer {
     pale: { value: new Color(PALE) },
     hits: { value: this.hitsU },
     hitsP: { value: new Array<number>(MAX_HITS).fill(0) },
+    fieldTex: { value: null as Texture | null },
   };
   private readonly ring = new HitRing(MAX_HITS, HIT_SEC);
+  private readonly field = new CellField(this.u, FIELD);
 
   constructor() {
     this.object = new Mesh(new PlaneGeometry(2, 2), new ShaderMaterial({
@@ -106,6 +117,7 @@ export class Bitmap implements BackdropLayer {
     }));
     this.object.frustumCulled = false;
     this.object.renderOrder = -1;
+    this.u.fieldTex.value = this.field.texture;
   }
 
   hit(x: number, y: number, at: number, strength: number, pitch: number, _color: Color): void {
@@ -122,9 +134,13 @@ export class Bitmap implements BackdropLayer {
     this.u.level.value = f.level;
     this.ring.fill(this.hitsU, f.time);
     for (let i = 0; i < MAX_HITS; i++) this.u.hitsP.value[i] = this.ring.pitch[i]!;
+    const { x: w, y: h } = this.u.res.value;
+    const c = this.u.cell.value;
+    this.field.render(f.renderer, Math.ceil(w / c), Math.ceil(h / c));
   }
 
   dispose(): void {
+    this.field.dispose();
     disposeMesh(this.object);
   }
 }

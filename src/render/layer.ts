@@ -1,5 +1,9 @@
-import type { BufferGeometry, Material, Vector2, Vector4 } from 'three';
-import type { FullScreenQuad } from 'three/addons/postprocessing/Pass.js';
+import {
+  FloatType, NearestFilter, ShaderMaterial, WebGLRenderTarget,
+  type BufferGeometry, type IUniform, type Material, type Texture, type Vector2, type Vector4, type WebGLRenderer,
+} from 'three';
+import { FullScreenQuad } from 'three/addons/postprocessing/Pass.js';
+import { QUAD_VERT } from './glsl';
 
 // 背景の層（D33〜D43）で共通の部品。
 
@@ -75,5 +79,42 @@ export class HitRing {
       hits[i]!.set(this.x[i]!, this.y[i]!, this.z[i]!, live ? age : 0);
       hitsV[i]!.set(live ? this.v[i]! : 0, this.pitch[i]!);
     }
+  }
+}
+
+// 升目ごとに同じ値になる場（D66、bitmap・ascii）を、升目1つにつき1回だけ計算する。
+// 全画面の画素ごとに同じノイズと当たりの和を計算し直すと、升目の画素の数（DPR 2 で数百）倍の無駄になる。
+// frag は、升目の番号（左下が 0）から値を返す `vec4 cellValue(vec2 id)` を持つ。
+// 結果は升目の数の大きさの texture に入り、描く側は texelFetch(field, ivec2(id), 0) で読む。
+
+export class CellField {
+  private readonly target = new WebGLRenderTarget(1, 1, {
+    type: FloatType, minFilter: NearestFilter, magFilter: NearestFilter, depthBuffer: false, generateMipmaps: false,
+  });
+  private readonly quad: FullScreenQuad;
+
+  constructor(uniforms: Record<string, IUniform>, frag: string) {
+    this.quad = new FullScreenQuad(new ShaderMaterial({
+      uniforms, vertexShader: QUAD_VERT,
+      fragmentShader: `${frag}\nvoid main() { gl_FragColor = cellValue(floor(gl_FragCoord.xy)); }`,
+    }));
+  }
+
+  get texture(): Texture {
+    return this.target.texture;
+  }
+
+  /** 升目の数（横 cols・縦 rows）の場を描き直す。毎フレーム、画面を描く前に呼ぶ */
+  render(renderer: WebGLRenderer, cols: number, rows: number): void {
+    if (this.target.width !== cols || this.target.height !== rows) this.target.setSize(cols, rows);
+    const prev = renderer.getRenderTarget();
+    renderer.setRenderTarget(this.target);
+    this.quad.render(renderer);
+    renderer.setRenderTarget(prev);
+  }
+
+  dispose(): void {
+    this.target.dispose();
+    disposeQuad(this.quad);
   }
 }
