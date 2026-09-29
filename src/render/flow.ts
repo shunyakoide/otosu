@@ -1,12 +1,21 @@
-import { HalfFloatType, LinearFilter, NoBlending, ShaderMaterial, Vector2, WebGLRenderTarget, type Texture, type WebGLRenderer } from 'three';
+import {
+  HalfFloatType, LinearFilter, NoBlending, ShaderMaterial, UniformsUtils, Vector2, WebGLRenderTarget, type Texture, type WebGLRenderer,
+} from 'three';
 import { FullScreenQuad, Pass } from 'three/addons/postprocessing/Pass.js';
+import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { CopyShader } from 'three/addons/shaders/CopyShader.js';
+import { LuminosityHighPassShader } from 'three/addons/shaders/LuminosityHighPassShader.js';
 import { disposeQuad } from './layer';
 
 // 残像（D31）。AfterimagePass と同じく前の絵を少し暗くして重ねる。
 // drip をオンにすると、明るいところ（ボール・当たった光）だけを入れ、前の絵を少し上から読んで重ねるので、
 // 当たった図形から光が垂れて流れ落ちる。流れる速さは数 px 幅の列ごとに違い、横にゆらぐ（水の筋に見えるように）。
 // オフなら AfterimagePass と同じ見た目。
+//
+// 後処理の残り（グローと画面への書き出し）もここでまとめて描く（D65）。
+// 以前は 残像 → 見せる絵 → UnrealBloomPass（元の絵に足し戻す）→ OutputPass と、全画面を 4 回書いていた。
+// 見せる絵を作らずに、グローの明るいところの抜き出し（半分の解像度）と最後の書き出しで、その場で組み立てる。
+// 全画面を書くのは 残像の蓄積と最後の書き出しの 2 回だけになる。見た目は同じ。
 
 export type FlowOptions = {
   drip: boolean;
@@ -57,14 +66,40 @@ void main() {
   gl_FragColor = max(src, old);
 }`;
 
-// 画面へ: 今の絵と、残像（drip のときは薄く）の明るいほう
-const SHOW = /* glsl */ `
+// 見せる絵: 今の絵と、残像（drip のときは薄く）の明るいほう
+const SHOWN = /* glsl */ `
 uniform sampler2D tNew;
 uniform sampler2D tComp;
 uniform float shown;
+vec4 shownAt(vec2 uv) {
+  return max(texture2D(tNew, uv), texture2D(tComp, uv) * shown);
+}`;
+
+// グローの明るいところの抜き出し（LuminosityHighPassShader と同じ。見せる絵から直接読む）
+const BRIGHT = /* glsl */ `
+${SHOWN}
+uniform vec3 defaultColor;
+uniform float defaultOpacity;
+uniform float luminosityThreshold;
+uniform float smoothWidth;
 varying vec2 vUv;
 void main() {
-  gl_FragColor = max(texture2D(tNew, vUv), texture2D(tComp, vUv) * shown);
+  vec4 texel = shownAt(vUv);
+  float v = luminance(texel.xyz);
+  float alpha = smoothstep(luminosityThreshold, luminosityThreshold + smoothWidth, v);
+  gl_FragColor = mix(vec4(defaultColor.rgb, defaultOpacity), texel, alpha);
+}`;
+
+// 画面へ: 見せる絵にグローを足し、トーンマップして出力の色空間にする（OutputPass と同じ）。
+// 画面に描くときは three がレンダラーの設定のトーンマップと色空間の関数を足すので、それを呼ぶだけ
+const OUTPUT = /* glsl */ `
+${SHOWN}
+uniform sampler2D tBloom;
+varying vec2 vUv;
+void main() {
+  gl_FragColor = shownAt(vUv) + texture2D(tBloom, vUv);
+  #include <tonemapping_fragment>
+  #include <colorspace_fragment>
 }`;
 
 const target = () =>
@@ -91,14 +126,31 @@ export class FlowPass extends Pass {
   private comp = target();
   private old = target();
   private readonly accumQuad = new FullScreenQuad(new ShaderMaterial({ uniforms: this.u, vertexShader: CopyShader.vertexShader, fragmentShader: ACCUM }));
-  private readonly showQuad = new FullScreenQuad(new ShaderMaterial({
-    uniforms: this.show,
+  /** グロー。ぼかしは UnrealBloomPass に任せ、明るいところの抜き出しを差し替え、最後の足し戻しは使わない */
+  readonly bloom: UnrealBloomPass;
+  /** UnrealBloomPass は最後に入力へ足し戻すので、その先を 1×1 のダミーにする */
+  private readonly sink = new WebGLRenderTarget(1, 1, { depthBuffer: false });
+  private readonly out = { ...this.show, tBloom: { value: null as Texture | null } };
+  private readonly outQuad = new FullScreenQuad(new ShaderMaterial({
+    uniforms: this.out,
     vertexShader: CopyShader.vertexShader,
-    fragmentShader: SHOW,
+    fragmentShader: OUTPUT,
     blending: NoBlending,
     depthTest: false,
     depthWrite: false,
   }));
+
+  constructor(strength: number, radius: number, threshold: number) {
+    super();
+    this.bloom = new UnrealBloomPass(new Vector2(1, 1), strength, radius, threshold);
+    const bright = { ...UniformsUtils.clone(LuminosityHighPassShader.uniforms), ...this.show };
+    Object.assign(bright, { luminosityThreshold: { value: threshold }, smoothWidth: { value: 0.01 } });
+    this.bloom.highPassUniforms = bright;
+    this.bloom.materialHighPassFilter.dispose();
+    this.bloom.materialHighPassFilter = new ShaderMaterial({
+      uniforms: bright, vertexShader: LuminosityHighPassShader.vertexShader, fragmentShader: BRIGHT,
+    });
+  }
 
   /** 毎フレーム呼ぶ。w, h は画面の大きさ（CSS px） */
   set(dt: number, o: FlowOptions, w: number, h: number): void {
@@ -113,28 +165,33 @@ export class FlowPass extends Pass {
     this.show.shown.value = o.drip ? DRIP_SHOWN : 1;
   }
 
-  override render(renderer: WebGLRenderer, writeBuffer: WebGLRenderTarget, readBuffer: WebGLRenderTarget): void {
+  override render(renderer: WebGLRenderer, writeBuffer: WebGLRenderTarget, readBuffer: WebGLRenderTarget, dt: number): void {
     this.u.tOld.value = this.old.texture;
     this.u.tNew.value = readBuffer.texture;
     renderer.setRenderTarget(this.comp);
     this.accumQuad.render(renderer);
+    // 見せる絵（今の絵と残像）は、グローの抜き出しと最後の書き出しがそれぞれその場で作る
     this.show.tNew.value = readBuffer.texture;
     this.show.tComp.value = this.comp.texture;
+    this.bloom.render(renderer, null as unknown as WebGLRenderTarget, this.sink, dt, false);
+    this.out.tBloom.value = this.bloom.renderTargetsHorizontal[0]!.texture;
     renderer.setRenderTarget(this.renderToScreen ? null : writeBuffer);
-    if (!this.renderToScreen && this.clear) renderer.clear();
-    this.showQuad.render(renderer);
+    this.outQuad.render(renderer);
     [this.old, this.comp] = [this.comp, this.old];
   }
 
   override setSize(width: number, height: number): void {
     this.comp.setSize(width, height);
     this.old.setSize(width, height);
+    this.bloom.setSize(width, height);
   }
 
   override dispose(): void {
     this.comp.dispose();
     this.old.dispose();
+    this.sink.dispose();
+    this.bloom.dispose();
     disposeQuad(this.accumQuad);
-    disposeQuad(this.showQuad);
+    disposeQuad(this.outQuad);
   }
 }

@@ -1,10 +1,8 @@
 import {
-  Color, HalfFloatType, NeutralToneMapping, OrthographicCamera, Scene, Vector2, WebGLRenderTarget, WebGLRenderer,
+  Color, HalfFloatType, NeutralToneMapping, OrthographicCamera, Scene, WebGLRenderTarget, WebGLRenderer,
 } from 'three';
 import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
-import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
-import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { BALL_RADIUS, HZ, WORLD_H, WORLD_W, type Bounds } from '../sim/constants';
 import type { SimEvent, Snapshot } from '../sim/types';
 import { Backdrop, type BackdropKind } from './backdrop';
@@ -31,7 +29,7 @@ import { Vines } from './vines';
 // ここはイベントの振り分けとフレームの段取りだけ。描くものはそれぞれのモジュール:
 //   balls.ts（ボールと尾）/ shape-view.ts（図形の線・形ごとの光）/ outline.ts（線のまとめ描き・エフェクトの輪郭）
 //   ripples.ts（波紋）/ glints.ts（きらめき）/ vines.ts + flowers.ts（蔦と花）/ emitters.ts（放出口）
-//   backdrop.ts（背景）/ hud.ts（計器）/ crosshair.ts・notes.ts・scope.ts・constellation.ts（当たった点の表示）/ flow.ts（残像）
+//   backdrop.ts（背景）/ hud.ts（計器）/ crosshair.ts・notes.ts・scope.ts・constellation.ts（当たった点の表示）/ flow.ts（残像・グロー・書き出し）
 
 export type { Preview, SnapshotSource };
 
@@ -93,8 +91,8 @@ export class Renderer {
   private readonly scene = new Scene();
   private readonly camera = new OrthographicCamera(0, WORLD_W, 0, -WORLD_H, -10, 10);
   private readonly composer: EffectComposer;
-  private readonly afterimage = new FlowPass();
-  private readonly bloom: UnrealBloomPass;
+  /** 残像・グロー・画面への書き出し（D31, D65） */
+  private readonly afterimage: FlowPass;
 
   // 作る順は同じ renderOrder の中での描く順になる（尾の MAX 合成 → 線の加算の順を変えないように）
   private readonly balls = new Balls();
@@ -147,10 +145,8 @@ export class Renderer {
     const rt = new WebGLRenderTarget(1, 1, { type: HalfFloatType, samples: 4 });
     this.composer = new EffectComposer(this.renderer, rt);
     this.composer.addPass(new RenderPass(this.scene, this.camera));
+    this.afterimage = new FlowPass(params.bloomStrength, 0.35, 0.8);
     this.composer.addPass(this.afterimage);
-    this.bloom = new UnrealBloomPass(new Vector2(1, 1), params.bloomStrength, 0.35, 0.8);
-    this.composer.addPass(this.bloom);
-    this.composer.addPass(new OutputPass());
 
     const r = this.ripples;
     const out = this.shapeView.outline;
@@ -398,7 +394,7 @@ export class Renderer {
     const since = (rs - this.energyStep) / HZ;
     const target = this.energyTarget * (since < 2 ? 1 : Math.exp(-(since - 2) / 2));
     this.energy += (target - this.energy) * (1 - Math.exp(-dt / 1.5));
-    this.bloom.strength = p.bloomStrength * (1 + 0.2 * this.energy);
+    this.afterimage.bloom.strength = p.bloomStrength * (1 + 0.2 * this.energy);
     // 流れ落ちる残像（D31）: 流すときは残像を長めに残す
     const fo = this.flowOpts;
     fo.drip = p.drip ?? false;
