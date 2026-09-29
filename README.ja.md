@@ -7,9 +7,19 @@
 落ちてくるボールが線や図形に当たって音を鳴らす、生成音楽のビジュアル作品です。
 楽器が弾けなくても感覚的に音楽を作れて、プロジェクターで投影したときに映えることを目指しています。
 
+**すぐに試す: <https://otosu.shunyakoide.com>**
+
 ![otosu: ボールが当たった四角・円・三角が光り、花が咲く。背景は ascii](docs/images/screenshot.jpg)
 
+## 動作環境
+
+- WebGL 2 が使えるブラウザ（最近の Chrome / Edge / Firefox / Safari。PC でもスマホでも動きます）
+- 音は最初のクリックかタップのあとに鳴り始めます（ブラウザの自動再生の制限のため）
+- MIDI のライブ出力には Web MIDI が必要で、実際には Chromium 系のブラウザに限られます。.mid の録音はどのブラウザでもできます
+
 ## 開発
+
+Node.js 20.19 以上が必要です。
 
 ```bash
 npm install
@@ -23,6 +33,11 @@ npm run build  # 型チェックと本番ビルド（dist/）
 ```
 
 Vite + TypeScript + three.js + Tone.js で作っています。物理（ボールと線分の衝突）は自前で、同じ配置なら毎回同じ曲になります。
+
+### 自分の環境にデプロイする
+
+`npm run build` で `dist/` に静的サイトができるので、静的ホスティングならどこにでも置けます。
+`npm run deploy`（Cloudflare Workers）を使う場合は、先に `wrangler.jsonc` の `routes` の行（作者のドメイン）を消してください。`otosu.<あなたのサブドメイン>.workers.dev` で公開されます。
 
 ## 操作
 

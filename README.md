@@ -7,9 +7,19 @@ Drop, hit, glow, sound.
 otosu is a generative music piece for the eye and ear: falling balls strike the lines and shapes you draw, and every hit becomes a note and a flash of light.
 It aims to let anyone make music by feel, without playing an instrument, and to look good projected on a wall.
 
+**Try it: <https://otosu.shunyakoide.com>**
+
 ![otosu: a square, circle and triangle glow as balls hit them, with flowers blooming over an ASCII-pattern backdrop](docs/images/screenshot.jpg)
 
+## Requirements
+
+- A browser with WebGL 2 (recent Chrome, Edge, Firefox or Safari, on desktop or phone)
+- Sound starts after your first click or tap (browsers block autoplay)
+- Live MIDI output needs Web MIDI, which in practice means a Chromium-based browser. Recording a .mid file works everywhere
+
 ## Development
+
+Needs Node.js 20.19 or later.
 
 ```bash
 npm install
@@ -23,6 +33,11 @@ npm run build  # type check and production build (dist/)
 ```
 
 Built with Vite, TypeScript, three.js and Tone.js. The physics (balls against line segments) is hand-written and deterministic: the same layout always plays the same music.
+
+### Deploying your own copy
+
+`npm run build` produces a static site in `dist/`; any static host works.
+To use `npm run deploy` (Cloudflare Workers), first remove the `routes` line in `wrangler.jsonc`, which points at the author's domain. The site is then served at `otosu.<your-subdomain>.workers.dev`.
 
 ## Controls
 
