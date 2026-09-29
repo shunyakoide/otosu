@@ -67,6 +67,8 @@ export class Audio {
   private delay!: Tone.PingPongDelay;
   private brightness!: Tone.Filter;
   private master!: Tone.Gain;
+  /** 出力の波形（scope の表示用。D62） */
+  private analyser: AnalyserNode | null = null;
   private stereoWidth = 0.7;
   private started = false;
   private starting: Promise<void> | null = null;
@@ -116,6 +118,13 @@ export class Audio {
     return Audio.native;
   }
 
+  /** 出力（リミッターのあと）の波形を out に書き、点の間隔（秒）を返す。始める前は 0（D62） */
+  waveform(out: Float32Array<ArrayBuffer>): number {
+    if (!this.analyser) return 0;
+    this.analyser.getFloatTimeDomainData(out);
+    return 1 / Audio.native.sampleRate;
+  }
+
   /** 音の仕組みを作って鳴らし始める。何度呼んでも一度だけ作る（失敗したら呼び直せる） */
   start(bpm: number): Promise<void> {
     this.starting ??= this.build(bpm).catch((err: unknown) => {
@@ -144,6 +153,10 @@ export class Audio {
     const makeup = new Tone.Gain(MAKEUP_DB, 'decibels');
     const limiter = new Tone.Limiter(-1);
     hitBus.chain(highpass, this.brightness, this.delay, reverb, this.master, comp, makeup, limiter, Tone.getDestination());
+    const analyser = Audio.native.createAnalyser();
+    analyser.fftSize = 2048;
+    limiter.connect(analyser);
+    this.analyser = analyser;
     Tone.getDestination().volume.value = -3;
 
     this.penVoices = makePool(PEN_VOICES, () => makePenVoice(hitBus));

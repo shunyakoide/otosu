@@ -49,6 +49,11 @@ export const DEFAULTS = {
   backdrop: 'none' as BackdropKind,
   backdropLevel: 1,
   hud: false,
+  /** 当たった点の照準線・音名・波形・星座（D62） */
+  crosshair: false,
+  noteNames: false,
+  scope: false,
+  constellation: false,
   idleLine: 0.3,
   visualOffsetMs: 0,
   pixelRatio: 1 as number,

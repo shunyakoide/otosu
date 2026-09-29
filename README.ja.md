@@ -55,7 +55,7 @@ Vite + TypeScript + three.js + Tone.js で作っています。物理（ボー�
 | 小窓 | 内容 |
 |---|---|
 | motion | 動きのオン／オフ（move）、図形の回転（spin）、放出口の揺らぎ（sway）とその動き方（glide / step） |
-| light | 光の強さ、軌跡の描き方、当たったときの演出（drip / flowers と花の種類: いろいろ・ひまわり・彼岸花・デイジー・花畑 / readout）、背景の種類 |
+| light | 光の強さ、軌跡の描き方、当たったときの演出（drip / flowers と花の種類: いろいろ・ひまわり・彼岸花・デイジー・花畑 / readout / crosshair / notes / scope / stars）、背景の種類 |
 | sound | リズム（放出口の周期）、曲（和音の進み方）、背景で鳴り続ける和音（hum） |
 | settings | ステレオの広がり、音と光のずれ（light delay）、解像度、MIDI、キー操作の一覧 |
 | scenes | 配置の保存と読み込み、ファイルへの書き出し・読み込み、リンクのコピー |

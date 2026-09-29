@@ -40,6 +40,8 @@ if (stored) sim.enqueue({ kind: 'loadScene', scene: stored });
 else for (const c of DEMO) sim.enqueue(c);
 
 const renderer = new Renderer(document.getElementById('app')!, params);
+// scope（D62）: 出力の波形。音を始める前は 0 を返し、そのあいだは音高から描く
+renderer.waveSource = (out) => audio.waveform(out);
 const input = new Input(
   renderer.canvas,
   sim,

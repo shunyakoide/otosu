@@ -9,14 +9,18 @@ import { BALL_RADIUS, HZ, WORLD_H, WORLD_W, type Bounds } from '../sim/constants
 import type { SimEvent, Snapshot } from '../sim/types';
 import { Backdrop, type BackdropKind } from './backdrop';
 import { Balls, type SnapshotSource } from './balls';
+import { Constellation } from './constellation';
+import { Crosshair } from './crosshair';
 import { Emitters } from './emitters';
 import type { FlowerKind } from './flowers';
 import { FlowPass, type FlowOptions } from './flow';
 import { Glints } from './glints';
 import { Hud } from './hud';
+import { Notes } from './notes';
 import { noteColor, type ColorMode } from './palette';
 import { QualityGovernor, type QualityLevel } from './quality';
 import { Ripples } from './ripples';
+import { Scope, type WaveSource } from './scope';
 import { arcPos } from './shape';
 import { ShapeView, stagger, type Dying, type Preview } from './shape-view';
 import { Vines } from './vines';
@@ -27,7 +31,7 @@ import { Vines } from './vines';
 // ここはイベントの振り分けとフレームの段取りだけ。描くものはそれぞれのモジュール:
 //   balls.ts（ボールと尾）/ shape-view.ts（図形の線・形ごとの光）/ outline.ts（線のまとめ描き・エフェクトの輪郭）
 //   ripples.ts（波紋）/ glints.ts（きらめき）/ vines.ts + flowers.ts（蔦と花）/ emitters.ts（放出口）
-//   backdrop.ts（背景）/ hud.ts（計器）/ flow.ts（残像）
+//   backdrop.ts（背景）/ hud.ts（計器）/ crosshair.ts・notes.ts・scope.ts・constellation.ts（当たった点の表示）/ flow.ts（残像）
 
 export type { Preview, SnapshotSource };
 
@@ -51,6 +55,11 @@ export type RenderParams = {
   backdropLevel?: number;
   /** 当たった点の計器の表示（D36） */
   hud?: boolean;
+  /** 当たった点の照準線・音名・波形・星座（D62） */
+  crosshair?: boolean;
+  noteNames?: boolean;
+  scope?: boolean;
+  constellation?: boolean;
 };
 
 const PICK_RADIUS = 12;
@@ -96,6 +105,10 @@ export class Renderer {
   private readonly vines = new Vines();
   private readonly backdrop = new Backdrop();
   private readonly hud = new Hud();
+  private readonly crosshair = new Crosshair();
+  private readonly notes = new Notes();
+  private readonly scope = new Scope();
+  private readonly constellation = new Constellation();
 
   /** ボールごとの、連鎖で通った図形（D15） */
   private readonly ballPath = new Map<number, number[]>();
@@ -142,7 +155,8 @@ export class Renderer {
     const r = this.ripples;
     const out = this.shapeView.outline;
     this.scene.add(
-      this.backdrop.object, this.hud.object, this.vines.quads, this.vines.flowers.mesh, r.circles, r.triangles, r.squares,
+      this.backdrop.object, this.hud.object, this.crosshair.object, this.constellation.object, this.scope.object, this.notes.object,
+      this.vines.quads, this.vines.flowers.mesh, r.circles, r.triangles, r.squares,
       this.emitters.mesh, this.balls.trails, out.edges, out.caps, this.glints.mesh, this.balls.balls,
     );
     this.resize();
@@ -156,6 +170,11 @@ export class Renderer {
 
   set selected(group: number) {
     this.shapeView.selected = group;
+  }
+
+  /** scope（D62）に出力の波形を渡す。音を始めたら main が設定する */
+  set waveSource(src: WaveSource | null) {
+    this.scope.source = src;
   }
 
   /** ツールバーの帯の高さ（CSS px）。変わったときだけ作り直す */
@@ -241,11 +260,21 @@ export class Renderer {
   // ---- イベント ----
 
   private onHit(e: Extract<SimEvent, { kind: 'hit' }>): void {
+    const at = e.step / HZ;
+    // 音名は chord で重ねた音も並べる（D62）
+    this.notes.hit(e, at);
     // chord で重ねた音は光らせない（本体の音が光る）
     if (e.voice > 0) return;
     // 背景の水に輪を立てる（くり返しは弱く）
-    this.backdrop.hit(e.x, e.y, e.step, e.velocity * (e.echo > 0 ? 0.5 : 1), e.note / 15, noteColor(e.note, this.params.colorMode));
-    this.hud.hit(e.x, e.y, e.step / HZ, e.velocity * (e.echo > 0 ? 0.5 : 1));
+    const v = e.velocity * (e.echo > 0 ? 0.5 : 1);
+    this.backdrop.hit(e.x, e.y, e.step, v, e.note / 15, noteColor(e.note, this.params.colorMode));
+    this.hud.hit(e.x, e.y, at, v);
+    // 照準線・波形・星座はくり返しには出さない（同じ点に重なるだけなので）
+    if (e.echo === 0) {
+      this.crosshair.hit(e.x, e.y, at, e.velocity);
+      this.scope.hit(e.x, e.y, at, e.velocity, e.midi);
+      this.constellation.hit(e.x, e.y, at, e.velocity, e.section);
+    }
     const shapes = this.shapeView.shapes;
     const s = shapes.get(e.group);
     if (s) this.shapeView.fxHit(s, e.step, e.velocity);
@@ -390,7 +419,12 @@ export class Renderer {
     this.backdrop.draw(p.backdrop ?? 'none', {
       renderer: this.renderer, camera: this.camera, rs, dt, energy: this.energy, level: p.backdropLevel ?? 1, base, view: this.view,
     });
-    this.hud.update(p.hud ?? false, rs / HZ, this.scale, base);
+    const time = rs / HZ;
+    this.hud.update(p.hud ?? false, time, this.scale, base);
+    this.crosshair.update(p.crosshair ?? false, time, this.view, -this.camera.top, base);
+    this.notes.update(p.noteNames ?? false, time, this.scale, base);
+    this.scope.update(p.scope ?? false, time, this.scale, base);
+    this.constellation.update(p.constellation ?? false, time, base);
     this.gc(head);
 
     this.composer.render(dt);

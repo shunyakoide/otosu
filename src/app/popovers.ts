@@ -110,6 +110,14 @@ function lightPopover({ params }: PopoversDeps): Popover {
   h.hint('a vine grows from the hit and blooms');
   h.toggle(params, 'hud', 'readout');
   h.hint('a small frame and coordinates flash where the ball hit');
+  h.toggle(params, 'crosshair', 'crosshair');
+  h.hint('lines reach out to the edges from the hit');
+  h.toggle(params, 'noteNames', 'notes');
+  h.hint('the name of the note floats up from the hit');
+  h.toggle(params, 'scope', 'scope');
+  h.hint('the sound\'s waveform stretches out from the hit');
+  h.toggle(params, 'constellation', 'stars');
+  h.hint('hits stay as stars, joined in a row; they clear every 8 bars');
   const b = pop.section('backdrop');
   b.choice(params, 'backdrop', 'kind', () => BACKDROPS.map((value) => ({ value })));
   b.slider(params, 'backdropLevel', { label: 'level', min: 0.2, max: 2, step: 0.05, format: (v) => v.toFixed(2), enabled: () => params.backdrop !== 'none' });

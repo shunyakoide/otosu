@@ -55,7 +55,7 @@ The toolbar at the top of the screen has:
 | Popover | Contents |
 |---|---|
 | motion | Motion on/off (move), shape rotation (spin), and emitter movement (sway) with its style (glide / step) |
-| light | Glow, trail style, effects on hit (drip / flowers and their kind: mixed, sunflower, spider lily, daisy, meadow / readout), and the backdrop |
+| light | Glow, trail style, effects on hit (drip / flowers and their kind: mixed, sunflower, spider lily, daisy, meadow / readout / crosshair / notes / scope / stars), and the backdrop |
 | sound | Rhythm (emitter periods), song (chord progression), and a soft chord that keeps playing underneath (hum) |
 | settings | Stereo width, sound-to-light offset (light delay), resolution, MIDI, and the list of keys |
 | scenes | Save and load layouts, export / import them as files, copy a link |
