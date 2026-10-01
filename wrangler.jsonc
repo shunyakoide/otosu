@@ -2,6 +2,8 @@
   "name": "otosu",
   "compatibility_date": "2026-09-01",
   "workers_dev": true,
+  // Version preview URLs (<alias>-otosu.<subdomain>.workers.dev) are off; set to true to share a build before deploying.
+  "preview_urls": false,
   // The author's domain. Remove this line (or use your own domain) when deploying a fork.
   "routes": [{ "pattern": "otosu.shunyakoide.com", "custom_domain": true }],
   "assets": { "directory": "./dist" }
