@@ -69,6 +69,9 @@ export class Audio {
   private master!: Tone.Gain;
   /** 出力の波形（scope の表示用。D62） */
   private analyser: AnalyserNode | null = null;
+  /** リミッターの後の出力。録画（recordStream）で使う */
+  private limiter: Tone.Limiter | null = null;
+  private recordDest: MediaStreamAudioDestinationNode | null = null;
   private stereoWidth = 0.7;
   private started = false;
   private starting: Promise<void> | null = null;
@@ -125,6 +128,23 @@ export class Audio {
     return 1 / Audio.native.sampleRate;
   }
 
+  /**
+   * 録画用の音（リミッターの後）。始める前は null。
+   * iOS の画面収録では Web Audio の音が雑音になるので、ページの中で動画に書き出すために使う（D70）。
+   * 音量のつまみは通さず、Destination の既定と同じ -3dB で揃える（ミュートは master で効く）
+   */
+  recordStream(): MediaStream | null {
+    if (!this.limiter) return null;
+    if (!this.recordDest) {
+      const trim = Audio.native.createGain();
+      trim.gain.value = 10 ** (-3 / 20);
+      this.recordDest = Audio.native.createMediaStreamDestination();
+      this.limiter.connect(trim);
+      trim.connect(this.recordDest);
+    }
+    return this.recordDest.stream;
+  }
+
   /** 音の仕組みを作って鳴らし始める。何度呼んでも一度だけ作る（失敗したら呼び直せる） */
   start(bpm: number): Promise<void> {
     this.starting ??= this.build(bpm).catch((err: unknown) => {
@@ -157,6 +177,7 @@ export class Audio {
     analyser.fftSize = 2048;
     limiter.connect(analyser);
     this.analyser = analyser;
+    this.limiter = limiter;
     Tone.getDestination().volume.value = -3;
 
     this.penVoices = makePool(PEN_VOICES, () => makePenVoice(hitBus));

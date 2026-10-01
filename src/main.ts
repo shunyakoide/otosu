@@ -7,6 +7,7 @@ import { createMotionKnobs, Popovers } from './app/popovers';
 import { bindShortcuts } from './app/shortcuts';
 import { setupStart, suspendWhenHidden } from './app/start';
 import { createState } from './app/state';
+import { VideoRecorder } from './app/videoRecorder';
 import { toggleFullscreen } from './util';
 import { Audio } from './audio/audio';
 import { AudioClock } from './audio/clock';
@@ -72,6 +73,22 @@ shapeMenu.onChoose = (group, choice, current) => {
 const pointerHint = new PointerHint(document.body);
 input.onHint = (kind, ms) => (kind ? pointerHint.show(kind, ms) : pointerHint.hide());
 
+// 動画の録画（D70）: iOS の画面収録では内蔵音が雑音になるので、ページの中で書き出す
+const recorder = VideoRecorder.supported() ? new VideoRecorder(renderer.canvas, () => audio.recordStream()) : null;
+const onRecord = () => {
+  if (!recorder) return;
+  if (recorder.state === 'recording') recorder.stop();
+  else if (recorder.state === 'ready') {
+    recorder.save().catch((err: unknown) => {
+      console.warn('[otosu] save video', err);
+      toolbar.flash('could not save the video');
+    });
+  } else {
+    const reason = recorder.start();
+    if (reason) toolbar.flash(reason);
+  }
+};
+
 // ---- ツールバー・小窓・保存（D24） ----
 // ボタンの処理は押されたときに呼ぶので、下で作る ctl・pops を参照してよい
 const toolbar = new Toolbar(document.body, TOOLS, {
@@ -87,8 +104,15 @@ const toolbar = new Toolbar(document.body, TOOLS, {
   scenes: (anchor) => pops.toggle('scenes', anchor),
   settings: (anchor) => pops.toggle('settings', anchor),
   fullscreen: toggleFullscreen,
+  record: recorder ? onRecord : null,
 });
 toolbar.el.classList.add('ui');
+if (recorder) {
+  recorder.onChange = (s) => {
+    toolbar.setRecord(s);
+    if (s === 'ready') toolbar.flash('tap again to save the video');
+  };
+}
 toolbar.setTool(params.tool);
 toolbar.setTempo(params.bpm);
 toolbar.setVolume(params.volume);
@@ -124,6 +148,7 @@ addEventListener('pointermove', (e) => {
 
 // 狭い画面ではツールバーが折り返すので、その高さの分だけワールドを下げる（D24）
 const layout = () => {
+  toolbar.fitRows();
   const band = Math.max(TOP_BAND_PX, Math.ceil(toolbar.el.getBoundingClientRect().bottom) + 6);
   document.documentElement.style.setProperty('--band', `${band}px`);
   renderer.setTopBand(band);
@@ -144,4 +169,4 @@ startLoop({ params, state, sim, audio, midi: midi.midi, renderer, input, clock }
 store.startAutosave();
 suspendWhenHidden({ state, audio, midi: midi.midi });
 
-if (import.meta.env.DEV) Object.assign(window, { otosu: { sim, audio, params, midi: midi.midi, renderer, input } });
+if (import.meta.env.DEV) Object.assign(window, { otosu: { sim, audio, params, midi: midi.midi, renderer, input, recorder } });

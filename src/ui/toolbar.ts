@@ -29,7 +29,13 @@ const ICONS = {
   minus: svg('<path d="M7 12h10"/>'),
   plus: svg('<path d="M7 12h10M12 7v10"/>'),
   fullscreen: svg('<path d="M4 9V4h5M15 4h5v5M20 15v5h-5M9 20H4v-5"/>'),
+  // 動画の録画（ビデオカメラ）と、録り終えたあとの保存（下向きの矢印）
+  record: svg('<rect x="3.5" y="7" width="12" height="10" rx="1.5"/><path d="m15.5 10.5 5-3v9l-5-3z"/>'),
+  stopRecord: svg('<rect x="7" y="7" width="10" height="10" rx="1" fill="currentColor"/>'),
+  saveVideo: svg('<path d="M12 4.5v10M7.5 10.5 12 15l4.5-4.5M5 19.5h14"/>'),
 };
+
+export type RecordButtonState = 'idle' | 'recording' | 'ready';
 
 const TOOL_LABELS: Record<Tool, string> = {
   line: 'line — bell',
@@ -55,6 +61,8 @@ export type ToolbarActions = {
   /** 細かい設定のパネル（, キーと同じ） */
   settings: (anchor: HTMLElement) => void;
   fullscreen: () => void;
+  /** 動画の録画・停止・保存（状態で変わる）。録画できない環境では null */
+  record: (() => void) | null;
 };
 
 /** 小窓・パネルを開くボタン */
@@ -72,6 +80,7 @@ export class Toolbar {
   private readonly tools = new Map<Tool, HTMLButtonElement>();
   private readonly muteBtn: HTMLButtonElement;
   private readonly playBtn: HTMLButtonElement;
+  private readonly recordBtn: HTMLButtonElement | null = null;
   /** 小窓を開くボタン */
   private readonly popBtns: Record<PopName, HTMLButtonElement>;
   private readonly volumeInput: HTMLInputElement;
@@ -100,18 +109,26 @@ export class Toolbar {
       into.appendChild(b);
       return b;
     };
+    // ボタンは区切り線ごとのまとまり（.tb-group）に入れ、狭い画面ではまとまりの単位で折り返す
+    const group = () => {
+      const g = document.createElement('div');
+      g.className = 'tb-group';
+      this.el.appendChild(g);
+      return g;
+    };
     const sep = () => this.el.appendChild(document.createElement('i'));
 
-    this.playBtn = btn(ICONS.pause, 'pause (space)', on.play);
+    this.playBtn = btn(ICONS.pause, 'pause (space)', on.play, group());
     sep();
+    const toolGroup = group();
     tools.forEach((t, i) => {
-      this.tools.set(t, btn(ICONS[t], `${TOOL_LABELS[t]} (${i + 1})`, () => on.tool(t)));
+      this.tools.set(t, btn(ICONS[t], `${TOOL_LABELS[t]} (${i + 1})`, () => on.tool(t), toolGroup));
     });
     sep();
 
     // テンポ: − 90 +（ホイールでも変えられる）
     const tempo = document.createElement('div');
-    tempo.className = 'tb-tempo';
+    tempo.className = 'tb-group tb-tempo';
     tempo.title = 'tempo (bpm) — scroll to change';
     const nudge = (d: number) => {
       this.setTempo(this.bpm + d);
@@ -128,7 +145,8 @@ export class Toolbar {
     this.el.appendChild(tempo);
     sep();
 
-    // 音量: スピーカー（押すとミュート）と細いスライダー
+    // 音量: スピーカー（押すとミュート）と細いスライダー。全消去と同じまとまり
+    const soundGroup = group();
     const vol = document.createElement('div');
     vol.className = 'tb-volume';
     this.muteBtn = btn(ICONS.sound, 'mute (M)', on.mute, vol);
@@ -144,19 +162,25 @@ export class Toolbar {
     });
     this.volumeInput.addEventListener('change', () => this.volumeInput.blur());
     vol.appendChild(this.volumeInput);
-    this.el.appendChild(vol);
-    btn(ICONS.clear, 'clear all shapes (C)', on.clear);
+    soundGroup.appendChild(vol);
+    btn(ICONS.clear, 'clear all shapes (C)', on.clear, soundGroup);
     sep();
-    const motionBtn: HTMLButtonElement = btn(ICONS.motion, 'motion', () => on.motion(motionBtn));
-    const lightBtn: HTMLButtonElement = btn(ICONS.light, 'light', () => on.light(lightBtn));
-    const soundBtn: HTMLButtonElement = btn(ICONS.music, 'sound', () => on.sound(soundBtn));
-    const settingsBtn: HTMLButtonElement = btn(ICONS.settings, 'settings (,)', () => on.settings(settingsBtn));
+    const pops = group();
+    const motionBtn: HTMLButtonElement = btn(ICONS.motion, 'motion', () => on.motion(motionBtn), pops);
+    const lightBtn: HTMLButtonElement = btn(ICONS.light, 'light', () => on.light(lightBtn), pops);
+    const soundBtn: HTMLButtonElement = btn(ICONS.music, 'sound', () => on.sound(soundBtn), pops);
+    const settingsBtn: HTMLButtonElement = btn(ICONS.settings, 'settings (,)', () => on.settings(settingsBtn), pops);
     sep();
-    const scenesBtn: HTMLButtonElement = btn(ICONS.scenes, 'save / load scenes', () => on.scenes(scenesBtn));
+    const files = group();
+    const scenesBtn: HTMLButtonElement = btn(ICONS.scenes, 'save / load scenes', () => on.scenes(scenesBtn), files);
     this.popBtns = { motion: motionBtn, light: lightBtn, sound: soundBtn, settings: settingsBtn, scenes: scenesBtn };
     this.setOpenPopover(null);
+    if (on.record) {
+      this.recordBtn = btn(ICONS.record, '', on.record, files);
+      this.setRecord('idle');
+    }
     // iPhone の Safari のように全画面にできない環境ではボタンを出さない
-    if (document.fullscreenEnabled) btn(ICONS.fullscreen, 'fullscreen (F)', on.fullscreen);
+    if (document.fullscreenEnabled) btn(ICONS.fullscreen, 'fullscreen (F)', on.fullscreen, files);
 
     // 操作の案内: 始めるまでは出さず、始めてからしばらくで消す（showHelp）。右クリックと Shift は、使える場面でカーソルのそばに出す（D53）
     this.help = document.createElement('div');
@@ -170,6 +194,20 @@ export class Toolbar {
     this.tip.id = 'toolbar-tip';
     this.tip.className = 'ui gone';
     parent.append(this.el, this.help, this.tip);
+  }
+
+  /**
+   * 折り返した位置の区切り線を隠す（行の端に線だけ残らないように）。画面の幅が変わったら呼ぶ。
+   * 隠すと行が少し短くなるだけで、まとまりが前の行へ戻ることはほぼない（戻っても線が 1 本消えたままになるだけ）
+   */
+  fitRows(): void {
+    const seps = [...this.el.querySelectorAll<HTMLElement>(':scope > i')];
+    for (const s of seps) s.classList.remove('wrap');
+    for (const s of seps) {
+      const prev = s.previousElementSibling?.getBoundingClientRect();
+      const next = s.nextElementSibling?.getBoundingClientRect();
+      if (prev && next && Math.abs(prev.top - next.top) > 1) s.classList.add('wrap');
+    }
   }
 
   /** 道具を選んだときに、名前と音色（例: circle — kick）をツールバーの下に少しだけ出す */
@@ -210,6 +248,17 @@ export class Toolbar {
     this.playBtn.title = paused ? 'play (space)' : 'pause (space)';
     this.playBtn.setAttribute('aria-label', this.playBtn.title);
     this.playBtn.classList.toggle('on', paused);
+  }
+
+  /** 録画ボタンの見た目: 録画 → 停止（点滅）→ 保存 */
+  setRecord(state: RecordButtonState): void {
+    const b = this.recordBtn;
+    if (!b) return;
+    b.innerHTML = state === 'recording' ? ICONS.stopRecord : state === 'ready' ? ICONS.saveVideo : ICONS.record;
+    b.title = state === 'recording' ? 'stop recording' : state === 'ready' ? 'save video' : 'record video';
+    b.setAttribute('aria-label', b.title);
+    b.classList.toggle('rec', state === 'recording');
+    b.classList.toggle('on', state === 'ready');
   }
 
   setVolume(db: number): void {

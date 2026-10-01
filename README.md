@@ -65,6 +65,7 @@ The toolbar at the top of the screen has:
 - volume and mute
 - clear all
 - popovers: motion / light / sound / settings / scenes
+- record video: records the picture and the built-in sound to a video file (press again to stop, then again to save). On iPhone, use this instead of the system screen recording, which captures the sound as noise
 - fullscreen (where supported)
 
 | Popover | Contents |

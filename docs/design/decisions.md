@@ -728,6 +728,24 @@ D22 で「あとで足す」とした、図形に掛けて当たったあとど�
   - 推定はメインスレッドで 1 コマ 11〜15ms（GPU）。使い始めの 1 回目はシェーダーを作るので 0.2〜4 秒止まる。本気でやるなら Worker に移す
   - 開発時のブラウザではカメラが使えず、合成した手でしか確かめていない
 
+## D70 動画の録画ボタン（iPhone の画面収録で音が雑音になるため）
+- iPhone の画面収録（コントロールセンター）で録ると、サイトの音は耳ではきれいなのに、動画の音が雑音だけになる（2026-10-01、iPhone 14 Pro）
+- Tone.js も描画も使わない最小のページで切り分けた。ド・ミ・ソ・ドを鳴らして画面収録した結果:
+  - Web Audio（OscillatorNode → destination）: 雑音
+  - 上に `navigator.audioSession.type = 'playback'`（D24 のマナーモード対策）を足す: 雑音
+  - `AudioContext({ sampleRate: 44100 })`: 雑音
+  - Web Audio → MediaStreamAudioDestinationNode → `<audio>` 要素: 雑音
+  - `<audio>` 要素で WAV を鳴らす（Web Audio なし）: きれい
+  - よって Safari 側の問題で、このサイトの音の作りでは直せない
+- 原因とみているもの（確定ではない）: WebKit は AudioContext があるだけで端末の入出力バッファを 128 フレームにする（MediaSessionManagerCocoa の updateSessionState）。iOS 26 では、入出力バッファを既定より小さくしたアプリを画面収録すると録画の音がおかしくなる、という報告がある（Apple Developer Forums 818594、FB22245447、2026-03。iOS 18 では起きない。回避策なし）。`<audio>` だけならバッファは小さくならない
+- 対策: ツールバーに動画の録画ボタンを足した（src/app/videoRecorder.ts）
+  - キャンバスの `captureStream(30)` と、リミッターの後の音（MediaStreamAudioDestinationNode、Destination の既定と同じ -3dB）を MediaRecorder で 1 本にする。端末の画面収録を通らないので雑音にならない（iPhone で確かめた）
+  - 形式は mp4（H.264 / AAC）を優先し、なければ webm。映像 8Mbps（粒や網点が潰れないよう多め）、音 192kbps
+  - 映るのは絵だけで、ツールバーなどの HTML の UI は映らない。音量のつまみは通さず、ミュートは効く
+  - ボタンは 録画 → 停止（白の点滅。MIDI の録音と同じ）→ 保存（下向きの矢印）。保存はタッチの端末では共有シート（「ビデオを保存」で写真に入る）、それ以外はダウンロード。共有シートはタップの中でしか開けないので、停止と保存を別の押下に分けた
+  - WebKit はキャンバスを録るときに preserveDrawingBuffer を強制するので、録画中は描画が少し重くなりうる
+- ついでにわかったこと: WebKit は `latencyHint` を使っていない（AudioContext::create に FIXME があるだけ）。D58 の `playback` は iPhone の Safari では効いていない
+
 ## 今後の候補
 - 図形ごとのエフェクトを増やす（例: 拍にそろえる。D17 の実装が git 履歴にある）
 - 音がばちばち鳴る（2026-09-29、D60 の確認中に気づいた）。図形の多い配置を開発時のブラウザで鳴らし、花（彼岸花・ひまわり）が多く咲いているとき。D58・D59 のあとも残っている。描画の重さで音声の処理が遅れている（バッファ不足）のか、声部の横取りなのかは未確認。花の種類を mixed / オフにして変わるか、`?fps` の音の遅れと合わせて調べる

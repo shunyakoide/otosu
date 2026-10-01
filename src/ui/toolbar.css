@@ -1,7 +1,8 @@
 /* 画面上端のツールバー（D24）。背景を付けず、アイコンの明るさだけで状態を見せる（D45） */
+/* 画面の幅に収まらないときは折り返す（帯の高さは main が測る）。決まった幅で切り替えると、その少し上の幅で両端が切れる */
 #toolbar {
-  position: fixed; left: 50%; top: 6px; transform: translateX(-50%); height: 40px;
-  display: flex; align-items: center; gap: 2px;
+  position: fixed; left: 50%; top: 6px; transform: translateX(-50%); min-height: 40px;
+  width: max-content; max-width: calc(100vw - 12px); display: flex; flex-wrap: wrap; justify-content: center; align-items: center; gap: 0 2px;
 }
 #toolbar button {
   width: 34px; height: 34px; padding: 7px; border: 0; border-radius: 8px;
@@ -11,7 +12,14 @@
 #toolbar button.on { color: var(--ui-strong); }
 #toolbar button:focus-visible { outline: 1px solid var(--ui-faint); outline-offset: -2px; }
 #toolbar button svg { width: 100%; height: 100%; display: block; }
+/* 区切り線ごとのまとまり。折り返すのはまとまりの間だけ。折り返した位置の線は隠す（Toolbar.fitRows） */
+#toolbar .tb-group { display: flex; align-items: center; gap: 2px; }
 #toolbar i { width: 1px; height: 16px; margin: 0 6px; background: var(--ui-line); }
+#toolbar i.wrap { display: none; }
+/* 動画を録画中: 白の点滅（MIDI の録音と同じ。D37） */
+#toolbar button.rec { color: var(--ui-strong); animation: tb-blink 1.2s ease-in-out infinite; }
+@keyframes tb-blink { 50% { opacity: 0.35; } }
+@media (prefers-reduced-motion: reduce) { #toolbar button.rec { animation: none; } }
 
 /* テンポ: − 90 + */
 #toolbar .tb-tempo { display: flex; align-items: center; }
@@ -67,7 +75,7 @@
 }
 #toolbar-tip.gone { opacity: 0; transition-duration: 0.8s; }
 
-/* タッチ: 指で押しやすい大きさにする。狭い画面ではツールバーを折り返す（帯の高さは main が測る） */
+/* タッチ: 指で押しやすい大きさにする */
 @media (hover: none) {
   #toolbar button { width: 40px; height: 40px; padding: 10px; }
   #toolbar button:hover { color: var(--ui-dim); }
@@ -75,10 +83,9 @@
   #toolbar .tb-tempo button { width: 32px; padding: 10px 6px; }
 }
 @media (max-width: 640px) {
-  #toolbar {
-    top: calc(4px + env(safe-area-inset-top)); width: calc(100vw - 12px); height: auto;
-    flex-wrap: wrap; justify-content: center; gap: 0 2px;
-  }
+  /* 区切り線の代わりに、まとまりの間を少しあける（まとまりの中はつめて、幅 375px で 2 段に収める） */
+  #toolbar { top: calc(4px + env(safe-area-inset-top)); width: calc(100vw - 12px); column-gap: 6px; }
+  #toolbar .tb-group { gap: 0; }
   #toolbar i { display: none; }
   #toolbar-help { left: 72px; text-align: center; }
   /* 狭いタッチ画面: 音量は本体のボタンで変えられるので、つまみを隠して 2 段に収める（D51） */
