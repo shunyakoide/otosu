@@ -91,6 +91,8 @@ export class Input {
   onShapeMenu: ((group: number, x: number, y: number) => void) | null = null;
   /** 操作の案内を出す・消す（D53）。ms は長押しの線を満たす時間 */
   onHint: ((kind: HintKind | null, ms?: number) => void) | null = null;
+  /** 人が図形を描き終えたときに呼ぶ。main が始めの案内を進める（D71） */
+  onDraw: (() => void) | null = null;
 
   private tool: Tool = 'line';
   private readonly sim: Sim;
@@ -239,6 +241,7 @@ export class Input {
     if (points.length < 2 || this.preview.perimeter < MIN_LINE_LEN) return;
     const segKind = e.shiftKey ? 'bumper' : 'line';
     this.sim.enqueue({ kind: 'addShape', points: points.map(([x, y]) => [x, y]), closed, segKind, form: this.tool });
+    this.onDraw?.();
   }
 
   /** 現在のツールで図形を作り直し、プレビューに反映する */

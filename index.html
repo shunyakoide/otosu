@@ -41,8 +41,13 @@
         user-select: none;
       }
       #overlay b { display: block; font-size: 40px; font-weight: 300; letter-spacing: 0.4em; margin-bottom: 16px; }
-      /* 押すとすぐ玉が落ちて鳴るので、先に音量を下げてもらう */
-      #overlay small { display: block; margin-top: 28px; font-size: 11px; letter-spacing: 0.2em; opacity: 0.45; }
+      /* 何をするものかを一行で（D71）。名前だけでは伝わらない */
+      #overlay p { margin: 0 0 32px; font-size: 12px; letter-spacing: 0.12em; opacity: 0.6; }
+      /* 押すとすぐ玉が落ちて鳴るので、先に音量を下げてもらう。真ん中の名前と説明から離して、画面の下に置く（D71） */
+      #overlay small {
+        position: absolute; left: 16px; right: 16px; bottom: calc(24px + env(safe-area-inset-bottom));
+        font-size: 11px; letter-spacing: 0.2em; opacity: 0.45;
+      }
       /* ---- UI（D24）: 操作が止まると消える。H で完全に隠す。ツールバーの見た目は src/ui/toolbar.css ---- */
       .ui { transition: opacity 0.5s; }
       body.idle .ui:not(:hover):not(.pn) { opacity: 0; pointer-events: none; }
@@ -57,7 +62,7 @@
   <body>
     <div id="app"></div>
     <a id="source-link" class="ui" href="https://github.com/shunyakoide/otosu" target="_blank" rel="noopener" title="open the code on GitHub">github</a>
-    <div id="overlay" role="button" tabindex="0"><div style="text-align:center"><b>otosu</b><span class="click">click</span><span class="tap">tap</span> to start<small>sound plays right away — mind your volume</small></div></div>
+    <div id="overlay" role="button" tabindex="0"><div style="text-align:center"><b>otosu</b><p>draw lines — falling balls turn them into music</p><span class="click">click</span><span class="tap">tap</span> to start<small>sound plays right away — mind your volume</small></div></div>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

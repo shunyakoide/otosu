@@ -2,7 +2,8 @@ import { Controls } from './app/controls';
 import { startLoop } from './app/loop';
 import { MidiControl } from './app/midiControl';
 import { DEFAULTS, PATTERNS, storedPrefs, type Params } from './app/params';
-import { applySceneParams, DEMO, loadStoredScene, SceneStore } from './app/persistence';
+import { DEMO } from './app/demo';
+import { applySceneParams, hasSavedScene, loadStoredScene, SceneStore } from './app/persistence';
 import { createMotionKnobs, Popovers } from './app/popovers';
 import { bindShortcuts } from './app/shortcuts';
 import { setupStart, suspendWhenHidden } from './app/start';
@@ -16,6 +17,7 @@ import { Renderer, TOP_BAND_PX } from './render/render';
 import { midiAt } from './sim/music';
 import { Sim } from './sim/sim';
 import { PointerHint } from './ui/hint';
+import { Intro } from './ui/intro';
 import { ShapeMenu } from './ui/shapeMenu';
 import { Toolbar } from './ui/toolbar';
 
@@ -27,6 +29,8 @@ const state = createState();
 const params: Params = { ...DEFAULTS };
 const knobs = createMotionKnobs(params);
 const audio = new Audio();
+// 初めての端末でだけ、最初の 1 本を描くまで案内する（D71）。リンクで開いた配置は保存されるので、読む前に調べる
+const intro = new Intro(document.body, hasSavedScene());
 const stored = loadStoredScene();
 if (stored) applySceneParams(params, knobs, stored);
 Object.assign(params, storedPrefs());
@@ -72,6 +76,7 @@ shapeMenu.onChoose = (group, choice, current) => {
 // 操作しているときだけ、画面の下にその場で使える操作を出す（D53）
 const pointerHint = new PointerHint(document.body);
 input.onHint = (kind, ms) => (kind ? pointerHint.show(kind, ms) : pointerHint.hide());
+input.onDraw = () => intro.drew();
 
 // 動画の録画（D70）: iOS の画面収録では内蔵音が雑音になるので、ページの中で書き出す
 const recorder = VideoRecorder.supported() ? new VideoRecorder(renderer.canvas, () => audio.recordStream()) : null;
@@ -116,6 +121,7 @@ if (recorder) {
 toolbar.setTool(params.tool);
 toolbar.setTempo(params.bpm);
 toolbar.setVolume(params.volume);
+intro.onDone = () => toolbar.showHelp();
 
 const midi = new MidiControl(params, state, sim);
 const refresh = () => pops.refresh();
@@ -163,7 +169,7 @@ const clock = new AudioClock();
 setupStart(document.getElementById('overlay')!, {
   params, state, audio, clock,
   applyPrefs: () => ctl.applyPrefs(),
-  onStarted: () => toolbar.showHelp(),
+  onStarted: () => intro.start(),
 });
 startLoop({ params, state, sim, audio, midi: midi.midi, renderer, input, clock });
 store.startAutosave();

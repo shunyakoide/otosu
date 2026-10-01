@@ -2,7 +2,7 @@ import type { Audio } from '../audio/audio';
 import { decodeScene, encodeScene, SCENE_HASH_KEY, SCENE_STORAGE_KEY, sceneFromSim } from '../scene/scene';
 import { DEFAULT_SONG } from '../sim/music';
 import type { Sim } from '../sim/sim';
-import type { Command, SceneData } from '../sim/types';
+import type { SceneData } from '../sim/types';
 import { ScenesPopover } from '../ui/scenes';
 import { loadLibrary, saveLibrary, savePrefs, sceneFromFile, sceneToFile, type Library } from '../ui/storage';
 import type { Toolbar } from '../ui/toolbar';
@@ -14,17 +14,17 @@ import { download, stamp } from '../util';
 
 // 配置の保存と読み込み（D18, D24）。URL ハッシュ → localStorage の自動保存、名前を付けた保存、ファイル、リンクのコピー。
 
-/** 保存された配置がないときに置く線 */
-export const DEMO: Command[] = [
-  { kind: 'addSegment', ax: 700, ay: 300, bx: 900, by: 360, loaded: true },
-  { kind: 'addSegment', ax: 1050, ay: 420, bx: 1250, by: 380, loaded: true },
-  { kind: 'addSegment', ax: 500, ay: 640, bx: 1000, by: 700, loaded: true },
-  { kind: 'addSegment', ax: 1150, ay: 700, bx: 1450, by: 620, loaded: true },
-  { kind: 'addSegment', ax: 820, ay: 950, bx: 980, by: 900, loaded: true },
-];
-
 /** 自動保存の間隔（ms） */
 const AUTOSAVE_MS = 2000;
+
+/** この端末に自動保存の配置があるか（前から使っている端末か。リンクで開いた配置を読む前に調べる） */
+export function hasSavedScene(): boolean {
+  try {
+    return localStorage.getItem(SCENE_STORAGE_KEY) !== null;
+  } catch {
+    return false;
+  }
+}
 
 /** 保存された配置（URL ハッシュ → localStorage の順） */
 export function loadStoredScene(): SceneData | null {

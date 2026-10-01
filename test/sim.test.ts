@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { driftOffset, hitAllowed, normalizePoints, shapeAngle, Sim } from '../src/sim/sim';
 import { formMidi, kickMidi, lengthToNote, midiAt, PROG, sectionAt, sectionRoot, sectionSteps, SONG_IDS, SONGS } from '../src/sim/music';
 import { inferForm } from '../src/sim/form';
+import { DEMO } from '../src/app/demo';
 import { rayCapsule } from '../src/sim/collide';
 import {
   BALL_LINE_COOLDOWN, BUMPER_MAX_SPEED, CHAIN_WINDOW, DRIFT_PERIOD, ENERGY_HITS, HZ, LINE_COOLDOWN, MAX_SEGS, SECTION_BARS, V_MIN,
@@ -680,6 +681,23 @@ describe('emission timing (D10)', () => {
     sim.advance();
     const added = sim.drainEvents().filter((e): e is ShapeAddedEvent => e.kind === 'shapeAdded').map((e) => e.loaded);
     expect(added).toEqual([true, false, true, true]);
+  });
+
+  it('rings every shape of the first-visit demo within 10 seconds, without confirm sounds (D72)', () => {
+    const sim = new Sim({ bpm: 60, pattern: [2, 3], skipFirstDrop: true });
+    for (const c of DEMO) sim.enqueue(c);
+    const hit = new Set<number>();
+    const added: ShapeAddedEvent[] = [];
+    for (let i = 0; i < 10 * HZ; i++) {
+      sim.advance();
+      for (const e of sim.drainEvents()) {
+        if (e.kind === 'hit') hit.add(e.group);
+        if (e.kind === 'shapeAdded') added.push(e);
+      }
+    }
+    expect(added.map((e) => e.form)).toEqual(['triangle', 'circle', 'line', 'line', 'square']);
+    expect(added.every((e) => e.loaded)).toBe(true);
+    expect([...hit].sort()).toEqual(added.map((e) => e.group).sort());
   });
 });
 

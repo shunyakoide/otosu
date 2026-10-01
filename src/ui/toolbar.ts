@@ -85,7 +85,7 @@ export class Toolbar {
   private readonly popBtns: Record<PopName, HTMLButtonElement>;
   private readonly volumeInput: HTMLInputElement;
   private readonly tempoOut: HTMLElement;
-  private bpm = 90;
+  private bpm = 60;
   private tempoTimer = 0;
   private readonly help: HTMLElement;
   private helpTimer = 0;

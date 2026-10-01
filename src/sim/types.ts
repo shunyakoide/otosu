@@ -116,7 +116,7 @@ export type Command =
   /** loaded: 人が置いたのではなく、始めの配置として置く（確定音を鳴らさない。D61） */
   | { kind: 'addSegment'; ax: number; ay: number; bx: number; by: number; dir?: 1 | -1; loaded?: boolean }
   /** form を省略したら点列から推定する（inferForm） */
-  | { kind: 'addShape'; points: [number, number][]; closed: boolean; segKind: SegKind; dir?: 1 | -1; form?: ShapeForm }
+  | { kind: 'addShape'; points: [number, number][]; closed: boolean; segKind: SegKind; dir?: 1 | -1; form?: ShapeForm; loaded?: boolean }
   /** 辺 id を含む図形をまるごと消す */
   | { kind: 'removeSegment'; id: number }
   | { kind: 'removeShape'; group: number }

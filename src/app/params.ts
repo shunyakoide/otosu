@@ -22,7 +22,8 @@ export const TRAILS = ['geometry', 'afterimage'] as const;
 export const PIXEL_RATIOS = [1, 1.5, 2] as const;
 
 export const DEFAULTS = {
-  bpm: 90,
+  /** 初めの配置（D72）でも光りすぎないように、ゆっくり始める（D73） */
+  bpm: 60,
   pattern: '2 : 3',
   volume: -3,
   muted: false,
@@ -47,7 +48,8 @@ export const DEFAULTS = {
   flowers: true,
   /** 咲かせる花の種類（mixed = いろいろ） */
   flowerKind: 'mixed' as FlowerKind,
-  backdrop: 'none' as BackdropKind,
+  /** 背景（D72）。初めて開いたときから絵になるように ascii にする */
+  backdrop: 'ascii' as BackdropKind,
   backdropLevel: 1,
   hud: false,
   /** 当たった点の照準線・音名・波形・星座（D62） */

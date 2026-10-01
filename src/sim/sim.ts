@@ -167,7 +167,7 @@ export class Sim {
           this.addShape(s, [[cmd.ax, cmd.ay], [cmd.bx, cmd.by]], false, 'line', cmd.dir, 'line', 'none', cmd.loaded);
           break;
         case 'addShape':
-          this.addShape(s, cmd.points, cmd.closed, cmd.segKind, cmd.dir, cmd.form);
+          this.addShape(s, cmd.points, cmd.closed, cmd.segKind, cmd.dir, cmd.form, 'none', cmd.loaded);
           break;
         case 'removeSegment': {
           const g = this.groupOf(cmd.id);

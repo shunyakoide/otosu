@@ -1,0 +1,21 @@
+/* 初めての人への案内（D71）。使える場面の案内（D53）と同じ場所に、少し大きく明るく出す */
+#intro {
+  position: fixed; left: 72px; right: 72px; bottom: calc(40px + env(safe-area-inset-bottom));
+  text-align: center; font-size: var(--fs-l); letter-spacing: 0.08em; line-height: 1.6; color: var(--ui-text);
+  pointer-events: none; opacity: 0; transition: opacity 0.8s;
+}
+#intro.show { opacity: 1; }
+/* 最初の 1 本を待つ間は、ゆっくり明滅させて目に留まるように */
+#intro.show[data-step='draw'] { animation: intro-breathe 3.2s ease-in-out infinite; }
+#intro kbd { font: inherit; color: var(--ui-strong); }
+@keyframes intro-breathe { 50% { opacity: 0.55; } }
+/* 操作中の案内と重ならないように、そちらが出ている間は隠す。消えたツールバーと一緒に消えないよう idle でも出しておく */
+body.hinting #intro { opacity: 0; animation: none; transition-duration: 0.15s; }
+body.idle #intro.show { opacity: 1; pointer-events: none; }
+body.idle.hinting #intro { opacity: 0; }
+@media (max-width: 640px) {
+  #intro { left: 16px; right: 16px; font-size: var(--fs); }
+}
+@media (prefers-reduced-motion: reduce) {
+  #intro.show[data-step='draw'] { animation: none; }
+}
