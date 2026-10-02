@@ -8,6 +8,8 @@ import { defineConfig, type Plugin, type ResolvedConfig } from 'vite';
 
 const SW_SOURCE = 'src/pwa/sw.js';
 const SW_OUT = 'sw.js';
+// インストールの画面でしか使わないので、取っておかない
+const SKIP = (path: string) => path === SW_OUT || path.startsWith('screenshots/');
 
 function files(dir: string): string[] {
   return readdirSync(dir, { withFileTypes: true }).flatMap((d) =>
@@ -31,7 +33,7 @@ function pwa(): Plugin {
       const urls: string[] = [];
       for (const f of files(out).sort()) {
         const path = relative(out, f).split(sep).join('/');
-        if (path === SW_OUT) continue;
+        if (SKIP(path)) continue;
         hash.update(path).update(readFileSync(f));
         // index.html は / で取る（Cloudflare は /index.html を / へ転送する）
         urls.push(path === 'index.html' ? '/' : `/${path}`);

@@ -11,13 +11,35 @@
       "src": "android-chrome-192x192.png",
       "sizes": "192x192",
       "type": "image/png",
-      "purpose": "any maskable"
+      "purpose": "any"
     },
     {
       "src": "android-chrome-512x512.png",
       "sizes": "512x512",
       "type": "image/png",
-      "purpose": "any maskable"
+      "purpose": "any"
+    },
+    {
+      "src": "maskable-512x512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ],
+  "screenshots": [
+    {
+      "src": "screenshots/wide.jpg",
+      "sizes": "1600x900",
+      "type": "image/jpeg",
+      "form_factor": "wide",
+      "label": "A square, circle and triangle glow as balls hit them"
+    },
+    {
+      "src": "screenshots/narrow.jpg",
+      "sizes": "750x1624",
+      "type": "image/jpeg",
+      "form_factor": "narrow",
+      "label": "The starting scene on a phone: a triangle, a circle, a square and two lines"
     }
   ],
   "theme_color": "#000000",
