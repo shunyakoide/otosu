@@ -16,6 +16,7 @@ It aims to let anyone make music by feel, without playing an instrument, and to 
 - A browser with WebGL 2 (recent Chrome, Edge, Firefox or Safari, on desktop or phone)
 - Sound starts after your first click or tap (browsers block autoplay)
 - Live MIDI output needs Web MIDI, which in practice means a Chromium-based browser. Recording a .mid file works everywhere
+- Once opened, it works offline too. You can install it as an app: "Install" in the address bar on Chrome / Edge, "Add to Home Screen" in the share menu on iPhone / iPad, "Add to Dock" in the File menu on Safari for Mac
 
 ## Development
 

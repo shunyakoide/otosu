@@ -1,6 +1,11 @@
 {
+  "id": "/",
   "name": "otosu",
   "short_name": "otosu",
+  "description": "Draw lines — falling balls turn them into music.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
   "icons": [
     {
       "src": "android-chrome-192x192.png",
@@ -16,6 +21,5 @@
     }
   ],
   "theme_color": "#000000",
-  "background_color": "#000000",
-  "display": "browser"
+  "background_color": "#000000"
 }

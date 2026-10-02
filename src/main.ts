@@ -16,6 +16,7 @@ import { Input, TOOLS } from './input/input';
 import { Renderer, TOP_BAND_PX } from './render/render';
 import { midiAt } from './sim/music';
 import { Sim } from './sim/sim';
+import { registerServiceWorker } from './pwa/register';
 import { PointerHint } from './ui/hint';
 import { Intro } from './ui/intro';
 import { ShapeMenu } from './ui/shapeMenu';
@@ -174,5 +175,7 @@ setupStart(document.getElementById('overlay')!, {
 startLoop({ params, state, sim, audio, midi: midi.midi, renderer, input, clock });
 store.startAutosave();
 suspendWhenHidden({ state, audio, midi: midi.midi });
+// オフラインでも開けるように（D74）
+registerServiceWorker();
 
 if (import.meta.env.DEV) Object.assign(window, { otosu: { sim, audio, params, midi: midi.midi, renderer, input, recorder } });
