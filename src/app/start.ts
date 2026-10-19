@@ -59,21 +59,18 @@ export function setupStart(overlay: HTMLElement, { params, state, audio, clock, 
 }
 
 /**
- * タブを隠すと rAF が止まり note off が送られないので、先に全部止める。
- * パッドは rAF と関係なく鳴り続けるので、AudioContext ごと止める（一時停止と同じく時刻も止まる）。
- * 戻ったら再開する。iOS は戻ったときに interrupted のままのことがあるので resume し直す（D41）
+ * タブを隠しても鳴らし続ける（BGM のように。D76）。隠れている間は loop.ts がタイマーで sim を進める。
+ * ページを離れる（pagehide）ときだけ、MIDI の音を全部止めて AudioContext ごと止める（時刻も止まる）。
+ * 戻ったら再開する。iOS は裏に回ると自分で止め、戻ったときに interrupted のままのことがあるので resume し直す（D41）
  */
 export function suspendWhenHidden({ state, audio, midi }: { state: EngineState; audio: Audio; midi: Midi }): void {
-  const hide = () => {
+  addEventListener('pagehide', () => {
     midi.allNotesOff();
     if (state.started) void audio.raw.suspend();
-  };
-  addEventListener('visibilitychange', () => {
-    if (document.hidden) hide();
-    else if (state.started) void audio.raw.resume();
   });
-  addEventListener('pagehide', hide);
-  addEventListener('pageshow', () => {
+  const resume = () => {
     if (state.started && !document.hidden) void audio.raw.resume();
-  });
+  };
+  addEventListener('visibilitychange', resume);
+  addEventListener('pageshow', resume);
 }

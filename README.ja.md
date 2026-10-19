@@ -9,7 +9,7 @@
 
 **すぐに試す: <https://otosu.shunyakoide.com>**
 
-![otosu: ボールが当たった四角・円・三角が光り、花が咲く。背景は ascii](docs/images/screenshot.jpg)
+![otosu: ボールが当たった四角・円・三角が光り、花が咲く。背景は ascii](.github/screenshot.jpg)
 
 ## 動作環境
 
@@ -109,10 +109,6 @@ Vite + TypeScript + three.js + Tone.js で作っています。物理（ボー�
 4. GarageBand でソフトウェア音源のトラックを作ると、otosu の音で鳴る（GarageBand はすべての MIDI 入力を受け取る）
 5. 円（キック・タム）と四角（ウッドブロック）は GM ドラムとして `drums` のチャンネル（既定 10）に送る。録音した .mid でも同じ
 6. 内蔵音と二重に鳴るのが気になる場合は `built-in` をオフにする。DAW 側の遅れは `offset` で合わせる
-
-## ドキュメント
-
-[docs/design/decisions.md](docs/design/decisions.md) に設計判断の記録（D1〜）を残しています。コードのコメントは `（D55）` のように番号でここを指しています。
 
 ## ライセンス
 

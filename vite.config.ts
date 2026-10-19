@@ -48,4 +48,10 @@ function pwa(): Plugin {
 
 export default defineConfig({
   plugins: [pwa()],
+  // MIT は配布物にも表記が要る: 依存のライセンスを dist/licenses.md に書き出し、
+  // /*! や @license のコメント（glsl.ts の Inigo Quilez の表記など）をビルド後も残す
+  build: {
+    license: { fileName: 'licenses.md' },
+    rolldownOptions: { output: { comments: { legal: true } } },
+  },
 });

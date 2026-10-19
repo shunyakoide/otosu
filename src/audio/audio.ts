@@ -26,7 +26,7 @@ import { emptyPool, freeSlot, makePool, pickSlot, type Pool } from './voicePool'
 //   確定音 ×2（line）───────────────────────────────────────────────────────────────→ reverb
 //   パッド A/B（根音＋5度）→ padFilter → padGain ─────────────────────────────────────→ reverb
 //   ティック ─────────────────────────────────────────────────────────────────────────────────→ master
-//   master（ミュート）→ Compressor → makeup（+MAKEUP_DB）→ Limiter → Destination
+//   master（ミュート）→［タッチ端末: highpass → +SPEAKER_BOOST_DB］→ Compressor → makeup（+MAKEUP_DB）→ Limiter → Destination
 
 /** energy の平滑化の時定数（秒）と、エフェクトのパラメータを書き換える最小間隔 */
 const ENERGY_TAU = 3;
@@ -48,6 +48,23 @@ const CONFIRM_SPAN = noteFromIndex(SLOT_MAX).midi - ROOT_MIDI;
  * イヤホン・PC では小さすぎた。重なって大きくなったぶんはコンプとリミッター（-1dB）で抑える
  */
 const MAKEUP_DB = 12;
+
+/**
+ * スマホ・タブレットの内蔵スピーカー向け（D75）。出力の 8 割以上が 300Hz より下（キック・パッド・低い音の基音）で、
+ * 内蔵スピーカーはそこをほとんど鳴らせない。それでもコンプとリミッターはその低音で効くので、聞こえる帯域が小さく残っていた。
+ * コンプの前で低音を落とし、空いたぶん持ち上げる。端末からはスピーカーかイヤホンかがわからないので、タッチ端末なら常に掛ける
+ */
+const SPEAKER_HP_HZ = 250;
+const SPEAKER_BOOST_DB = 9;
+
+function speakerFromUrl(): boolean | undefined {
+  const v = new URLSearchParams(location.search).get('speaker');
+  return v === '1' ? true : v === '0' ? false : undefined;
+}
+
+function isTouchDevice(): boolean {
+  return matchMedia('(hover: none) and (pointer: coarse)').matches;
+}
 
 function latencyHintFromUrl(): AudioContextLatencyCategory | number | undefined {
   const v = new URLSearchParams(location.search).get('latency');
@@ -172,7 +189,15 @@ export class Audio {
     const comp = new Tone.Compressor({ threshold: -20, ratio: 3, attack: 0.01, release: 0.25 });
     const makeup = new Tone.Gain(MAKEUP_DB, 'decibels');
     const limiter = new Tone.Limiter(-1);
-    hitBus.chain(highpass, this.brightness, this.delay, reverb, this.master, comp, makeup, limiter, Tone.getDestination());
+    hitBus.chain(highpass, this.brightness, this.delay, reverb, this.master);
+    if (speakerFromUrl() ?? isTouchDevice()) {
+      const speakerHighpass = new Tone.Filter({ type: 'highpass', frequency: SPEAKER_HP_HZ, rolloff: -24, Q: 0.5 });
+      const speakerBoost = new Tone.Gain(SPEAKER_BOOST_DB, 'decibels');
+      this.master.chain(speakerHighpass, speakerBoost, comp);
+    } else {
+      this.master.connect(comp);
+    }
+    comp.chain(makeup, limiter, Tone.getDestination());
     const analyser = Audio.native.createAnalyser();
     analyser.fftSize = 2048;
     limiter.connect(analyser);
