@@ -9,7 +9,7 @@ It aims to let anyone make music by feel, without playing an instrument, and to 
 
 **Try it: <https://otosu.shunyakoide.com>**
 
-![otosu: a square, circle and triangle glow as balls hit them, with flowers blooming over an ASCII-pattern backdrop](docs/images/screenshot.jpg)
+![otosu: a square, circle and triangle glow as balls hit them, with flowers blooming over an ASCII-pattern backdrop](.github/screenshot.jpg)
 
 ## Requirements
 
@@ -109,10 +109,6 @@ Line colors stay the same; only the pitches move. Your layout and settings are s
 4. Create a software instrument track in GarageBand and it will play otosu's notes (GarageBand listens to every MIDI input).
 5. Circles (kick / tom) and squares (woodblock) are sent as GM drums on the `drums` channel (10 by default). Recorded .mid files do the same.
 6. If the built-in sound doubles up with your DAW, turn off `built-in`. Use `offset` to compensate for DAW latency.
-
-## Documentation
-
-[docs/design/decisions.md](docs/design/decisions.md) is the log of design decisions (D1 onward), written in Japanese. Code comments refer to it by number, e.g. `(D55)`.
 
 ## License
 

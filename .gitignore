@@ -32,3 +32,6 @@ dist-ssr
 
 # Local tool settings
 .claude
+
+# Local docs
+docs/design/decisions.md
