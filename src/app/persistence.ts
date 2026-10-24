@@ -16,6 +16,8 @@ import { download, stamp } from '../util';
 
 /** 自動保存の間隔（ms） */
 const AUTOSAVE_MS = 2000;
+/** 共有リンクの URL。アプリに包んで otosu:// などで開いたときは、その URL を渡しても開けないので公開しているサイトにする */
+const PUBLIC_URL = 'https://otosu.shunyakoide.com/';
 
 /** この端末に自動保存の配置があるか（前から使っている端末か。リンクで開いた配置を読む前に調べる） */
 export function hasSavedScene(): boolean {
@@ -129,7 +131,8 @@ export class SceneStore {
   }
 
   async copySceneUrl(): Promise<void> {
-    const url = `${location.origin}${location.pathname}#${SCENE_HASH_KEY}=${this.currentCode()}`;
+    const base = location.protocol.startsWith('http') ? `${location.origin}${location.pathname}` : PUBLIC_URL;
+    const url = `${base}#${SCENE_HASH_KEY}=${this.currentCode()}`;
     let ok = true;
     try {
       await navigator.clipboard.writeText(url);
