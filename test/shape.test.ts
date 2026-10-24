@@ -33,6 +33,13 @@ describe('normalizePoints', () => {
     expect(normalizePoints([[0, 0], [10, 0]], false)).toEqual([[0, 0], [10, 0]]);
     expect(PLACE_BOUNDS.minX).toBeLessThan(0);
   });
+
+  it('shrinks a closed shape larger than the bounds instead of flattening it', () => {
+    const b = { minX: 0, maxX: 1000, maxY: 500 };
+    // 1400 四方の正方形は、500 四方の正方形になって収まる（左右・上下が潰れない）
+    expect(normalizePoints([[-200, 0], [1200, 0], [1200, 1400], [-200, 1400]], true, b))
+      .toEqual([[250, 0], [750, 0], [750, 500], [250, 500]]);
+  });
 });
 
 describe('measureShape', () => {
