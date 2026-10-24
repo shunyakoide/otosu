@@ -49,14 +49,21 @@ export type Shape = {
 export function normalizePoints(
   points: readonly (readonly [number, number])[], closed: boolean, b: Bounds = PLACE_BOUNDS,
 ): [number, number][] | null {
-  // 閉じた図形は、はみ出したぶん全体を平行移動して画面内に収める（点ごとのクランプだと形が潰れるため）
+  // 閉じた図形は、範囲より大きければ中心を保って縮め、はみ出したぶん全体を平行移動して収める（点ごとのクランプだと形が潰れるため）
+  let k = 1;
+  let cx = 0;
+  let cy = 0;
   let dx = 0;
   let dy = 0;
   if (closed && points.length) {
     const xs = points.map((p) => p[0]);
     const ys = points.map((p) => p[1]);
-    const [x0, x1, y0, y1] = [Math.min(...xs), Math.max(...xs), Math.min(...ys), Math.max(...ys)];
+    let [x0, x1, y0, y1] = [Math.min(...xs), Math.max(...xs), Math.min(...ys), Math.max(...ys)];
     if (Number.isFinite(x0 + x1 + y0 + y1)) {
+      k = Math.min(1, (b.maxX - b.minX) / (x1 - x0 || 1), b.maxY / (y1 - y0 || 1));
+      cx = (x0 + x1) / 2;
+      cy = (y0 + y1) / 2;
+      [x0, x1, y0, y1] = [cx + (x0 - cx) * k, cx + (x1 - cx) * k, cy + (y0 - cy) * k, cy + (y1 - cy) * k];
       if (x0 < b.minX) dx = b.minX - x0;
       else if (x1 > b.maxX) dx = b.maxX - x1;
       if (y0 < 0) dy = -y0;
@@ -65,8 +72,8 @@ export function normalizePoints(
   }
   const out: [number, number][] = [];
   for (const q of points) {
-    const px = q[0] + dx;
-    const py = q[1] + dy;
+    const px = cx + (q[0] - cx) * k + dx;
+    const py = cy + (q[1] - cy) * k + dy;
     // 画面内にクランプ（保存形式と同じ扱いにして、読み込み後も同じ形になるように）
     const x = Math.min(b.maxX, Math.max(b.minX, Math.round(px)));
     const y = Math.min(b.maxY, Math.max(0, Math.round(py)));
