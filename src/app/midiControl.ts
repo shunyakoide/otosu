@@ -35,16 +35,25 @@ export class MidiControl {
   /** settings の MIDI の区切り。onConnected は出力の一覧が変わったとき（表示を合わせる用） */
   fill(pane: Section, onConnected: () => void): void {
     const { params, midi } = this;
-    pane.toggle(params, 'internalSound', 'built-in');
-    pane.select(params, 'midiOutput', 'output', () => [{ value: '', label: '(none)' }, ...this.outputs.map((o) => ({ value: o.id, label: o.name }))], (id) => midi.select(id || null));
+    // Web MIDI がない（iPhone の Safari・iOS アプリ）ときは送る設定を出さず、.mid の録音だけにする。
+    // 送る先がないので内蔵音も切れないようにする（前に切って保存した端末で、何も鳴らなくならないように）
+    const live = Midi.supported;
+    if (live) {
+      pane.toggle(params, 'internalSound', 'built-in');
+      pane.select(params, 'midiOutput', 'output', () => [{ value: '', label: '(none)' }, ...this.outputs.map((o) => ({ value: o.id, label: o.name }))], (id) => midi.select(id || null));
+    } else {
+      params.internalSound = true;
+    }
     pane.slider(params, 'midiChannel', { label: 'channel', min: 1, max: 16, step: 1, onChange: () => midi.allNotesOff() });
     pane.slider(params, 'midiDrumChannel', { label: 'drums ○ □', min: 1, max: 16, step: 1, onChange: () => midi.allNotesOff() });
     pane.slider(params, 'midiNoteLength', { label: 'note length', min: 0.05, max: 2, step: 0.05, format: (v) => `${v.toFixed(2)} s` });
-    pane.slider(params, 'midiOffsetMs', { label: 'offset', min: -100, max: 200, step: 1, format: (v) => `${v} ms` });
-    [this.connectBtn, this.recordBtn] = pane.actions([
-      { label: 'connect', onClick: () => void this.connect().then(onConnected) },
+    if (live) pane.slider(params, 'midiOffsetMs', { label: 'offset', min: -100, max: 200, step: 1, format: (v) => `${v} ms` });
+    const btns = pane.actions([
+      ...(live ? [{ label: 'connect', onClick: () => void this.connect().then(onConnected) }] : []),
       { label: RECORD_LABEL, title: 'record to a MIDI file (R)', onClick: () => this.toggleRecording() },
-    ]) as [HTMLButtonElement, HTMLButtonElement];
+    ]);
+    this.connectBtn = live ? (btns[0] ?? null) : null;
+    this.recordBtn = btns.at(-1) ?? null;
   }
 
   private async connect(): Promise<void> {
