@@ -2,7 +2,7 @@
 // 形式: SceneData の JSON を UTF-8 → base64url。URL では `#s=<code>`、localStorage にも同じ文字列を置く。
 // v1（segs）も読み込めて、v2（shapes）に変換して返す。
 
-import { BPM_MAX, BPM_MIN, DRIFT_AMP_MAX, MAX_SEGS, MAX_SHAPE_EDGES, MIN_LINE_LEN, PLACE_BOUNDS } from '../sim/constants';
+import { BPM_MAX, BPM_MIN, beatSteps, DRIFT_AMP_MAX, MAX_SEGS, MAX_SHAPE_EDGES, MIN_LINE_LEN, PLACE_BOUNDS } from '../sim/constants';
 import { inferForm, isShapeEffect, isShapeForm } from '../sim/form';
 import { DEFAULT_SONG, isSongId } from '../sim/music';
 import type { Sim } from '../sim/sim';
@@ -93,7 +93,8 @@ export function validateScene(raw: unknown): SceneData | null {
   if (r.v !== 1 && r.v !== 2) return null;
   if (!num(r.bpm)) return null;
   if (!Array.isArray(r.pattern) || r.pattern.length < 1 || r.pattern.length > MAX_EMITTERS) return null;
-  if (!r.pattern.every((b) => num(b) && b > 0 && b <= 32)) return null;
+  // 1 拍の間隔が最速テンポでも 1 ステップ以上あること。これより短いと Sim.emit の格子が進まず止まる
+  if (!r.pattern.every((b) => num(b) && beatSteps(b, BPM_MAX) >= 1 && b <= 32)) return null;
   if (typeof r.rotate !== 'boolean' || !num(r.rotationSpeed)) return null;
   const d = r.drift as Record<string, unknown> | undefined;
   if (typeof d !== 'object' || d === null) return null;
