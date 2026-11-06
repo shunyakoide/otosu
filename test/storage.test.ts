@@ -25,6 +25,13 @@ describe('ui storage (D24)', () => {
     expect(sceneFromFile('{"kind":"otosu.scene","scene":{"v":9}}')).toBeNull();
   });
 
+  it('rejects rhythms too short to advance the emission grid', () => {
+    const withPattern = (pattern: number[]) => sceneFromFile(sceneToFile('p', { ...scene, pattern }));
+    expect(withPattern([1e-300])).toBeNull();
+    expect(withPattern([0.02])).toBeNull();
+    expect(withPattern([1, 1.5])?.scene.pattern).toEqual([1, 1.5]);
+  });
+
   it('lists saved scenes newest first', () => {
     const lib = { a: { code: '', savedAt: 1 }, b: { code: '', savedAt: 3 }, c: { code: '', savedAt: 2 } };
     expect(libraryNames(lib)).toEqual(['b', 'c', 'a']);
